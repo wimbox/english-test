@@ -160,10 +160,17 @@
                         <p style="color: var(--text-secondary);">لوحة التحكم</p>
                     </div>
                     <div class="flex items-center gap-3 no-print">
-                        <div id="syncStatus" class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold"
-                            style="background: rgba(244, 92, 67, 0.1); color: #f45c43;">
-                            <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                            غير متصل
+                        <div class="flex items-center gap-2">
+                            <div id="syncStatus"
+                                class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold"
+                                style="background: rgba(244, 92, 67, 0.1); color: #f45c43;">
+                                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                غير متصل
+                            </div>
+                            <button onclick="firebaseManager.manualSync()" title="مزامنة يدوية مع السحابة"
+                                class="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all border border-white/20 shadow-sm">
+                                🔄
+                            </button>
                         </div>
                         <button onclick="logout()" class="btn-danger px-4 py-2 rounded-xl font-semibold"> تسجيل الخروج
                             🚪
@@ -281,11 +288,17 @@
                         <p style="color: var(--text-secondary);">إدارة النظام والسجلات</p>
                     </div>
                     <div class="flex items-center gap-3 no-print">
-                        <div id="adminSyncStatus"
-                            class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold"
-                            style="background: rgba(244, 92, 67, 0.1); color: #f45c43;">
-                            <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                            غير متصل
+                        <div class="flex items-center gap-2">
+                            <div id="adminSyncStatus"
+                                class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold"
+                                style="background: rgba(244, 92, 67, 0.1); color: #f45c43;">
+                                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                غير متصل
+                            </div>
+                            <button onclick="firebaseManager.manualSync()" title="مزامنة يدوية مع السحابة"
+                                class="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all border border-white/20 shadow-sm">
+                                🔄
+                            </button>
                         </div>
                         <button onclick="logout()" class="btn-danger px-4 py-2 rounded-xl font-semibold"> تسجيل الخروج
                             🚪

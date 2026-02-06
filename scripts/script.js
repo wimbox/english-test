@@ -1656,6 +1656,7 @@ function saveAndShowResults(resultData, scores) {
 
   if (typeof firebaseManager !== 'undefined') {
     firebaseManager.saveRecords(allRecords);
+    firebaseManager.saveEmployees(employees);
   }
 
   showResults(finalResult, finalScores);

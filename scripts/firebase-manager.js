@@ -3,7 +3,9 @@ class FirebaseManager {
     constructor() {
         this.db = null;
         this.isOnline = false;
-        this.syncQueue = []; // Queue for offline changes
+        // Load persistent queue from localStorage
+        const savedQueue = localStorage.getItem('englishTest_syncQueue');
+        this.syncQueue = savedQueue ? JSON.parse(savedQueue) : [];
         this.isSyncing = false;
         this.init();
     }
@@ -28,11 +30,13 @@ class FirebaseManager {
 
                     if (this.isOnline) {
                         console.log('🌐 Firebase Cloud: Online & Syncing');
-                        // If we just reconnected, try to process any queued updates
+                        // Always try to process queue when coming online
+                        this.processSyncQueue();
+
+                        // Pull latest data automatically on first connection or reconnection
                         if (!wasAlreadyOnline) {
-                            this.processSyncQueue();
-                            // Optional: Pull latest data effectively
-                            // this.syncFromCloud(); 
+                            console.log('🔄 Performing automatic cloud sync...');
+                            this.syncFromCloud();
                         }
                     } else {
                         console.warn('📴 Firebase Cloud: Disconnected/Offline');
@@ -70,7 +74,12 @@ class FirebaseManager {
 
     addToQueue(operation, data) {
         this.syncQueue.push({ operation, data, timestamp: Date.now() });
+        this.saveQueueToLocal();
         this.processSyncQueue();
+    }
+
+    saveQueueToLocal() {
+        localStorage.setItem('englishTest_syncQueue', JSON.stringify(this.syncQueue));
     }
 
     async processSyncQueue() {
@@ -87,6 +96,7 @@ class FirebaseManager {
 
             console.log(`✅ Queue task ${task.operation} completed`);
             this.syncQueue.shift(); // Remove on success
+            this.saveQueueToLocal();
             this.processSyncQueue(); // Next
         } catch (error) {
             console.error(`❌ Queue task ${task.operation} failed`, error);
@@ -111,6 +121,7 @@ class FirebaseManager {
         } catch (error) {
             console.error('❌ Failed to save to cloud, queuing...', error);
             this.addToQueue('saveRecords', records);
+            if (typeof showToast === 'function') showToast('⚠️ فشل المزامنة المباشرة، سيتم الحفظ عند العودة للاتصال');
         }
     }
 
@@ -225,27 +236,70 @@ class FirebaseManager {
         }
     }
 
-    // Sync from cloud to local
+    // Sync from cloud to local (Improved with Merge Support)
     async syncFromCloud() {
-        if (!this.isOnline) return;
+        if (!this.isOnline || !this.db) return;
+
+        // Safety: If there is a pending save task in the queue, skip pull to avoid race conditions
+        const hasPendingSave = this.syncQueue.some(t => ['saveRecords', 'saveEmployees'].includes(t.operation));
+        if (hasPendingSave) {
+            console.log('⏳ Skipping cloud pull: Pending local changes in queue...');
+            return;
+        }
 
         try {
             const cloudRecords = await this.loadRecords();
             const cloudEmployees = await this.loadEmployees();
             const cloudCustomQuestions = await this.loadCustomQuestions();
 
-            // Check if cloud has data before overwriting local completely
-            // Simple strategy: If cloud has data, it wins.
-            if (cloudRecords && cloudRecords.length > 0) {
-                localStorage.setItem('englishTest_records', JSON.stringify(cloudRecords));
-                if (typeof allRecords !== 'undefined') allRecords = cloudRecords;
+            // 1. Merge Records (Cloud + Local)
+            if (cloudRecords) {
+                const localRecords = JSON.parse(localStorage.getItem('englishTest_records')) || [];
+
+                // Create a map to ensure uniqueness by file_number
+                const mergedMap = new Map();
+                // Local records first
+                localRecords.forEach(r => { if (r && r.file_number) mergedMap.set(r.file_number.trim(), r); });
+                // Cloud records overwrite if same file_number (newer data usually)
+                cloudRecords.forEach(r => { if (r && r.file_number) mergedMap.set(r.file_number.trim(), r); });
+
+                const mergedRecords = Array.from(mergedMap.values());
+
+                localStorage.setItem('englishTest_records', JSON.stringify(mergedRecords));
+                if (typeof allRecords !== 'undefined') allRecords = mergedRecords;
+
+                // If there were local records that weren't in cloud, push the merged set up
+                if (mergedRecords.length > cloudRecords.length) {
+                    console.log('📤 Local has extra records, syncing merged set back to cloud...');
+                    this.saveRecords(mergedRecords);
+                }
             }
 
-            if (cloudEmployees && Object.keys(cloudEmployees).length > 0) {
-                localStorage.setItem('englishTest_employees', JSON.stringify(cloudEmployees));
-                if (typeof employees !== 'undefined') employees = cloudEmployees;
+            // 2. Merge Employees (Special focus on counters)
+            if (cloudEmployees) {
+                const localEmployees = JSON.parse(localStorage.getItem('englishTest_employees')) || {};
+                const mergedEmployees = { ...localEmployees };
+
+                Object.keys(cloudEmployees).forEach(id => {
+                    if (!mergedEmployees[id]) {
+                        mergedEmployees[id] = cloudEmployees[id];
+                    } else {
+                        // Maximize counter to avoid duplicate file numbers
+                        mergedEmployees[id].counter = Math.max(mergedEmployees[id].counter || 0, cloudEmployees[id].counter || 0);
+                        // Inherit latest name/password from cloud if available
+                        mergedEmployees[id].name = cloudEmployees[id].name || mergedEmployees[id].name;
+                        mergedEmployees[id].password = cloudEmployees[id].password || mergedEmployees[id].password;
+                    }
+                });
+
+                localStorage.setItem('englishTest_employees', JSON.stringify(mergedEmployees));
+                if (typeof employees !== 'undefined') employees = mergedEmployees;
+
+                // Sync counters back if local was higher
+                this.saveEmployees(mergedEmployees);
             }
 
+            // 3. Question Bank (Cloud wins)
             if (cloudCustomQuestions && cloudCustomQuestions.length > 0) {
                 localStorage.setItem('englishTest_customQuestions', JSON.stringify(cloudCustomQuestions));
                 if (typeof adminQM !== 'undefined') {
@@ -254,10 +308,7 @@ class FirebaseManager {
                 }
             }
 
-            console.log('✅ Data synced from cloud to local');
-            if (typeof showToast === 'function') showToast('تم تحديث البيانات من السحابة ☁️');
-
-            // Refresh UI if function exists
+            console.log('✅ Background sync completed successfully');
             if (typeof refreshUI === 'function') refreshUI();
 
         } catch (error) {
@@ -277,4 +328,4 @@ class FirebaseManager {
 }
 
 // Initialize Firebase Manager
-const firebaseManager = new FirebaseManager();
+var firebaseManager = new FirebaseManager();
