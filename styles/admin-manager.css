@@ -1,0 +1,214 @@
+/* Admin Question Manager Styles */
+.admin-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 20px;
+}
+
+.question-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 120px 100px 120px;
+    gap: 15px;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    transition: 0.2s;
+}
+
+.question-row:hover {
+    background: rgba(102, 126, 234, 0.12);
+    box-shadow: inset 4px 0 0 #667eea;
+}
+
+.q-badge {
+    padding: 4px 10px;
+    border-radius: 50px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    text-align: center;
+}
+
+.q-type-choice {
+    background: rgba(102, 126, 234, 0.2);
+    color: #667eea;
+}
+
+.q-type-typing {
+    background: rgba(56, 239, 125, 0.2);
+    color: #38ef7d;
+}
+
+.search-input,
+#qLevelFilter {
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(0, 0, 0, 0.05);
+    color: #1a1a2e;
+    padding: 12px 20px;
+    border-radius: 15px;
+    outline: none;
+    width: 100%;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.theme-modern .search-input,
+.theme-modern #qLevelFilter {
+    background: rgba(255, 255, 255, 0.9);
+    border: 2px solid #e2e8f0;
+    color: #1e293b;
+}
+
+.search-input:focus,
+#qLevelFilter:focus {
+    border-color: #6366f1;
+    background: #ffffff;
+    box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.1);
+}
+
+#qLevelFilter option {
+    background-color: #ffffff;
+    color: #1e293b;
+    padding: 12px;
+}
+
+.btn-icon {
+    width: 35px;
+    height: 35px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    transition: 0.2s;
+    cursor: pointer;
+}
+
+.btn-edit {
+    background: rgba(102, 126, 234, 0.1);
+    color: #667eea;
+}
+
+.btn-edit:hover {
+    background: #667eea;
+    color: white;
+}
+
+.btn-delete {
+    background: rgba(244, 92, 67, 0.1);
+    color: #f45c43;
+}
+
+.btn-delete:hover {
+    background: #f45c43;
+    color: white;
+}
+
+.admin-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(5px);
+}
+
+.admin-modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: #1a1a2e;
+    width: 100%;
+    max-width: 600px;
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 30px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #94a3b8;
+    font-size: 0.9rem;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    padding: 12px 15px;
+    border-radius: 12px;
+    outline: none;
+    transition: all 0.3s ease;
+    font-size: 0.95rem;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    border-color: #6366f1;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+}
+
+.form-group select option {
+    background-color: #1a1a2e;
+    color: #ffffff;
+    padding: 12px;
+}
+
+.bulk-textarea {
+    height: 180px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+/* Dashboard Mini Stats Badges - Premium Large Version */
+.section-mini-badge {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e2e8f0;
+    border-radius: 20px;
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: #1e293b;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 130px;
+}
+
+.section-mini-badge:hover {
+    transform: translateY(-5px) scale(1.03);
+    border-color: #6366f1;
+    background: #ffffff;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.section-mini-badge .stat-value {
+    font-size: 1.5rem;
+    font-weight: 900;
+    color: #1e293b;
+    line-height: 1;
+}
+
+.section-mini-badge .stat-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 700;
+}

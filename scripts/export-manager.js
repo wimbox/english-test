@@ -1,150 +1,101 @@
-// Export and Backup Manager
-// ميزات التصدير والنسخ الاحتياطي
-
 class ExportManager {
 
-    // تصدير السجلات إلى ملف Excel (CSV)
+    // 1. Full Master Backup (JSON) - Everything included
+    exportFullSystem() {
+        const fullBackup = {
+            version: '2.0',
+            timestamp: new Date().toISOString(),
+            data: {
+                records: JSON.parse(localStorage.getItem('englishTest_records')) || [],
+                employees: JSON.parse(localStorage.getItem('englishTest_employees')) || {},
+                customQuestions: JSON.parse(localStorage.getItem('englishTest_customQuestions')) || [],
+                supervisorPass: localStorage.getItem('englishTest_supervisorPass') || '1357'
+            }
+        };
+
+        const jsonContent = JSON.stringify(fullBackup, null, 2);
+        const date = new Date().toLocaleDateString('ar-EG').replace(/\//g, '-');
+
+        // 1. Local Download
+        this.downloadFile(jsonContent, `نسخة_احتياطية_شاملة_${date}.json`, 'application/json');
+
+        // 2. Cloud Backup (Auto-Push)
+        if (typeof firebaseManager !== 'undefined') {
+            firebaseManager.pushFullBackup(fullBackup);
+        }
+
+        if (typeof showToast === 'function') showToast('✅ تم إنشاء النسخة الاحتياطية (محلي + سحابي)');
+    }
+
+    // 2. Export Records to Excel (CSV)
     exportToExcel() {
         const records = JSON.parse(localStorage.getItem('englishTest_records')) || [];
-
         if (records.length === 0) {
-            showToast('لا توجد سجلات للتصدير 📭');
+            if (typeof showToast === 'function') showToast('⚠️ لا توجد سجلات للتصدير');
             return;
         }
 
-        // إنشاء رأس الجدول
-        const headers = [
-            'رقم الملف',
-            'اسم الطالب',
-            'العمر',
-            'الموظف',
-            'الدرجة الكلية',
-            'الحروف والصوتيات',
-            'النطق',
-            'الاستماع',
-            'القراءة',
-            'الكتابة',
-            'المفردات والقواعد',
-            'المستوى',
-            'المنهج',
-            'التاريخ'
-        ];
-
-        // تحويل السجلات إلى صفوف
+        const headers = ['رقم الملف', 'اسم الطالب', 'العمر', 'الموظف', 'الدرجة', 'المستوى', 'المنهج', 'التاريخ'];
         const rows = records.map(r => [
-            r.file_number,
-            r.student_name,
-            r.age,
-            r.employee_id,
-            r.total_score,
-            r.section_a_score || 0,
-            r.section_b_score || 0,
-            r.section_c_score || 0,
-            r.section_d_score || 0,
-            r.section_e_score || 0,
-            r.section_f_score || 0,
-            r.level,
-            r.curriculum,
-            r.test_date
+            r.file_number, r.student_name, r.age, r.employee_id,
+            r.total_score, r.level, r.curriculum, r.test_date
         ]);
 
-        // إنشاء محتوى CSV مع دعم UTF-8 للعربية
-        const BOM = '\uFEFF'; // للتعامل مع الحروف العربية في Excel
+        const BOM = '\uFEFF';
         let csvContent = BOM + headers.join(',') + '\n';
         rows.forEach(row => {
             csvContent += row.map(cell => `"${cell}"`).join(',') + '\n';
         });
 
-        // تحميل الملف
-        this.downloadFile(csvContent, 'سجلات_الاختبارات.csv', 'text/csv;charset=utf-8');
-        showToast('تم تصدير السجلات بنجاح 📊');
+        this.downloadFile(csvContent, 'سجلات_الطلاب.csv', 'text/csv;charset=utf-8');
+        if (typeof showToast === 'function') showToast('📊 تم تصدير السجلات إلى Excel');
     }
 
-    // تصدير السجلات إلى JSON
-    exportToJSON() {
-        const data = {
-            exportDate: new Date().toISOString(),
-            records: JSON.parse(localStorage.getItem('englishTest_records')) || [],
-            employees: JSON.parse(localStorage.getItem('englishTest_employees')) || {}
-        };
-
-        if (data.records.length === 0) {
-            showToast('لا توجد بيانات للتصدير 📭');
-            return;
-        }
-
-        const jsonContent = JSON.stringify(data, null, 2);
-        this.downloadFile(jsonContent, 'نسخة_احتياطية.json', 'application/json');
-        showToast('تم إنشاء النسخة الاحتياطية بنجاح 💾');
-    }
-
-    // إنشاء نسخة احتياطية كاملة
-    createBackup() {
-        const backup = {
-            version: '1.0',
-            createdAt: new Date().toISOString(),
-            data: {
-                records: JSON.parse(localStorage.getItem('englishTest_records')) || [],
-                employees: JSON.parse(localStorage.getItem('englishTest_employees')) || {}
-            }
-        };
-
-        const jsonContent = JSON.stringify(backup, null, 2);
-        const date = new Date().toLocaleDateString('ar-EG').replace(/\//g, '-');
-        this.downloadFile(jsonContent, `نسخة_احتياطية_${date}.json`, 'application/json');
-        showToast('تم إنشاء النسخة الاحتياطية بنجاح 💾');
-    }
-
-    // استعادة من نسخة احتياطية
-    restoreFromBackup(file) {
+    // 3. Restore Everything from Backup
+    restoreFullSystem(file) {
         const reader = new FileReader();
 
         reader.onload = (e) => {
             try {
                 const backup = JSON.parse(e.target.result);
+                let restoredCount = 0;
 
-                // التحقق من صحة الملف
-                if (!backup.data || (!backup.data.records && !backup.data.employees)) {
-                    // محاولة قراءة التنسيق القديم
-                    if (backup.records) {
-                        localStorage.setItem('englishTest_records', JSON.stringify(backup.records));
-                        if (backup.employees) {
-                            localStorage.setItem('englishTest_employees', JSON.stringify(backup.employees));
-                        }
+                // Priority 1: Format v2.0 (Full System)
+                if (backup.version === '2.0' && backup.data) {
+                    const d = backup.data;
+                    if (d.records) localStorage.setItem('englishTest_records', JSON.stringify(d.records));
+                    if (d.employees) localStorage.setItem('englishTest_employees', JSON.stringify(d.employees));
+                    if (d.customQuestions) localStorage.setItem('englishTest_customQuestions', JSON.stringify(d.customQuestions));
+                    if (d.supervisorPass) localStorage.setItem('englishTest_supervisorPass', d.supervisorPass);
+                    restoredCount = d.records ? d.records.length : 0;
+                }
+                // Priority 2: Legacy Formats (Records Only)
+                else {
+                    const records = backup.records || (backup.data && backup.data.records) || (Array.isArray(backup) ? backup : null);
+                    if (records) {
+                        localStorage.setItem('englishTest_records', JSON.stringify(records));
+                        restoredCount = records.length;
                     } else {
-                        throw new Error('ملف غير صالح');
-                    }
-                } else {
-                    // التنسيق الجديد
-                    if (backup.data.records) {
-                        localStorage.setItem('englishTest_records', JSON.stringify(backup.data.records));
-                    }
-                    if (backup.data.employees) {
-                        localStorage.setItem('englishTest_employees', JSON.stringify(backup.data.employees));
+                        throw new Error('Unsupported format');
                     }
                 }
 
-                showToast('تم استعادة البيانات بنجاح! سيتم تحديث الصفحة... ✅');
+                if (typeof showToast === 'function') {
+                    showToast(`✅ تم استعادة ${restoredCount} سجل والبيانات بنجاح! جاري التحديث...`);
+                }
 
-                // تحديث الصفحة بعد ثانيتين
-                setTimeout(() => {
-                    window.location.reload();
-                }, 2000);
+                setTimeout(() => window.location.reload(), 1500);
 
             } catch (error) {
                 console.error('Restore error:', error);
-                showToast('فشل في قراءة ملف النسخة الاحتياطية ❌');
+                if (typeof showToast === 'function') showToast('❌ فشل الاستعادة: الملف غير صالح أو تالف');
             }
-        };
-
-        reader.onerror = () => {
-            showToast('فشل في قراءة الملف ❌');
         };
 
         reader.readAsText(file);
     }
 
-    // دالة مساعدة لتحميل الملفات
+    // Helper: Download File
     downloadFile(content, filename, mimeType) {
         const blob = new Blob([content], { type: mimeType });
         const url = URL.createObjectURL(blob);
@@ -157,37 +108,31 @@ class ExportManager {
         URL.revokeObjectURL(url);
     }
 
-    // فتح نافذة اختيار ملف للاستعادة
-    openRestoreDialog() {
+    // Trigger Import Dialog
+    triggerImport() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
         input.onchange = (e) => {
             const file = e.target.files[0];
-            if (file) {
-                this.restoreFromBackup(file);
+            if (file && confirm('⚠️ تنبيه: سيتم استبدال جميع البيانات الحالية ببيانات النسخة الاحتياطية. هل أنت متأكد؟')) {
+                this.restoreFullSystem(file);
             }
         };
         input.click();
     }
 }
 
-// إنشاء مدير التصدير
+// Global instance
 const exportManager = new ExportManager();
 
-// دوال مختصرة للاستخدام السريع
-function exportToExcel() {
-    exportManager.exportToExcel();
-}
+// Bridge functions for UI
+function exportFullBackup() { exportManager.exportFullSystem(); }
+function importFullBackup() { exportManager.triggerImport(); }
+function exportToExcel() { exportManager.exportToExcel(); }
 
-function exportToJSON() {
-    exportManager.exportToJSON();
-}
-
-function createBackup() {
-    exportManager.createBackup();
-}
-
-function restoreBackup() {
-    exportManager.openRestoreDialog();
-}
+// Legacy aliases for compatibility
+function exportData() { exportFullBackup(); }
+function triggerImport() { importFullBackup(); }
+function createBackup() { exportFullBackup(); }
+function restoreBackup() { importFullBackup(); }

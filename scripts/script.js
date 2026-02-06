@@ -78,16 +78,14 @@ class AudioManager {
   play(soundName) {
     const sound = this.sounds[soundName];
     if (sound) {
-      // Lazy error handling
-      sound.onerror = () => {
-        if (this.fallbacks[soundName] && sound.src !== this.fallbacks[soundName]) {
-          sound.src = this.fallbacks[soundName];
-          sound.play().catch(console.warn);
-        }
-      };
-
       sound.currentTime = 0;
-      return sound.play().catch(e => console.log("Audio play prevented:", e));
+      return sound.play().catch(err => {
+        console.warn(`Primary sound ${soundName} failed, trying fallback...`);
+        if (this.fallbacks[soundName]) {
+          const fallback = new Audio(this.fallbacks[soundName]);
+          return fallback.play().catch(e => console.error("Fallback audio failed too:", e));
+        }
+      });
     }
     return Promise.resolve();
   }
@@ -220,800 +218,22 @@ let testState = {
   timerInterval: null,
   timeLimit: 0,
   showInstantFeedback: true,
-  isExtraChance: false
+  isExtraChance: false,
+  isAdminTest: false,
+  skipSave: false,
+  maxStageReached: 1,
+  history: []
 };
 
 // ==================== THEME FUNCTIONS ====================
-function switchTheme(theme) {
-  currentTheme = theme;
-  const body = document.body;
+// Note: Authentication, Theme management, and dropdown population moved to core-navigation.js or script.js initialization
 
-  // Remove all theme classes
-  body.classList.remove('theme-modern', 'theme-win7', 'theme-dark');
-
-  // Add new theme class
-  body.classList.add('theme-' + theme);
-
-  // Update active button
-  document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
-  const btnId = 'theme' + theme.charAt(0).toUpperCase() + theme.slice(1);
-  const btn = document.getElementById(btnId);
-  if (btn) btn.classList.add('active');
-
-  // Update config if SDK is available
-  if (window.elementSdk) {
-    window.elementSdk.setConfig({ current_theme: theme });
-  }
-}
-
-// ==================== AUTHENTICATION ====================
-function login() {
-  const employeeId = document.getElementById('employeeSelect').value;
-  const password = document.getElementById('passwordInput').value;
-
-  if (!employeeId) {
-    showToast('الرجاء اختيار الموظف');
-    return;
-  }
-
-  if (employeeId === 'admin') {
-    if (password === ADMIN_PASSWORD) {
-      isAdmin = true;
-      isSupervisor = false;
-      currentUser = 'admin';
-      showAdminDashboard();
-    } else {
-      showLoginError();
-    }
-  } else if (employeeId === 'supervisor') {
-    if (password === SUPERVISOR_PASSWORD) {
-      isAdmin = false;
-      isSupervisor = true;
-      currentUser = 'supervisor';
-      showAdminDashboard();
-    } else {
-      showLoginError();
-    }
-  } else {
-    if (employees[employeeId] && employees[employeeId].password === password) {
-      isAdmin = false;
-      isSupervisor = false;
-      currentUser = employeeId;
-      showEmployeeDashboard();
-    } else {
-      showLoginError();
-    }
-  }
-}
-
-function showLoginError() {
-  document.getElementById('loginError').classList.remove('hidden');
-  document.getElementById('passwordInput').classList.add('shake');
-  setTimeout(() => document.getElementById('passwordInput').classList.remove('shake'), 300);
-}
-
-// Add Enter key support for login
-document.addEventListener('DOMContentLoaded', function () {
-  const passwordInput = document.getElementById('passwordInput');
-  if (passwordInput) {
-    passwordInput.addEventListener('keypress', function (event) {
-      if (event.key === 'Enter') {
-        login();
-      }
-    });
-  }
-
-  // Populate employee dropdown dynamically
-  populateAllEmployeeDropdowns();
-
-  showWelcomeScreen();
-});
-
-// Populate employee dropdown with current names from localStorage/Firebase
-// Populate all employee dropdowns with current names
-function populateMonthFilter() {
-  const select = document.getElementById('filterMonth');
-  if (!select) return;
-
-  const currentMonthValue = select.value;
-  select.innerHTML = '<option value="all">جميع الشهور</option>';
-
-  // Get unique months from allRecords
-  const months = new Set();
-  allRecords.forEach(r => {
-    if (r.month_year) {
-      months.add(r.month_year);
-    } else if (r.test_date) {
-      // Fallback for old records: try to extract something
-      // Extract month/year from Arabic or standard strings
-      const dateParts = r.test_date.split('/');
-      if (dateParts.length >= 2) {
-        // Simple heuristic: year/month/day
-        const y = dateParts[0].replace(/[^\d]/g, '');
-        const m = dateParts[1].replace(/[^\d]/g, '');
-        if (y && m) months.add(`${y}-${m.padStart(2, '0')}`);
-      }
-    }
-  });
-
-  // Sort months descending
-  Array.from(months).sort().reverse().forEach(my => {
-    const option = document.createElement('option');
-    option.value = my;
-    const [year, month] = my.split('-');
-    const monthNames = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
-    option.textContent = `${monthNames[parseInt(month) - 1]} ${year}`;
-    select.appendChild(option);
-  });
-
-  if (currentMonthValue) select.value = currentMonthValue;
-}
-
-function populateAllEmployeeDropdowns() {
-  const dropdowns = [
-    { id: 'employeeSelect', defaultText: '-- اختر الموظف --', includeAdmin: true },
-    { id: 'filterEmployee', defaultText: 'جميع الموظفين', defaultValue: 'all', includeAdmin: false },
-    { id: 'adminEmployeeSelect', defaultText: '-- اختر الموظف --', includeAdmin: false },
-    { id: 'forgotEmployeeSelect', defaultText: '-- اختر الموظف --', includeAdmin: true }
-  ];
-
-  dropdowns.forEach(conf => {
-    const select = document.getElementById(conf.id);
-    if (!select) return;
-
-    // Save currently selected value to restore it if possible
-    const currentValue = select.value;
-
-    // Clear existing options
-    select.innerHTML = '';
-
-    // Add default option
-    const defaultOption = document.createElement('option');
-    defaultOption.value = conf.defaultValue || '';
-    defaultOption.textContent = conf.defaultText;
-    select.appendChild(defaultOption);
-
-    // Add employee options
-    Object.entries(employees).forEach(([id, emp]) => {
-      const option = document.createElement('option');
-      option.value = id;
-      option.textContent = emp.name;
-      select.appendChild(option);
-    });
-
-    // Add admin option if requested
-    if (conf.includeAdmin) {
-      const adminOption = document.createElement('option');
-      adminOption.value = 'admin';
-      adminOption.textContent = 'المدير 👑';
-      select.appendChild(adminOption);
-
-      const supervisorOption = document.createElement('option');
-      supervisorOption.value = 'supervisor';
-      supervisorOption.textContent = 'المحاسب المالى 💰';
-      select.appendChild(supervisorOption);
-    }
-
-    // Populate month filter if it's the admin filter
-    if (conf.id === 'filterMonth') {
-      populateMonthFilter();
-    }
-
-    // Restore selection if it still exists
-    if (currentValue && (employees[currentValue] || currentValue === 'admin' || currentValue === 'all')) {
-      select.value = currentValue;
-    }
-  });
-}
-
-function logout() {
-  currentUser = null;
-  isAdmin = false;
-  isSupervisor = false;
-  document.getElementById('loginScreen').classList.remove('hidden');
-  document.getElementById('employeeDashboard').classList.add('hidden');
-  document.getElementById('adminDashboard').classList.add('hidden');
-  document.getElementById('testScreen').classList.add('hidden');
-  document.getElementById('resultsScreen').classList.add('hidden');
-  document.getElementById('employeeSelect').value = '';
-  document.getElementById('passwordInput').value = '';
-  document.getElementById('loginError').classList.add('hidden');
-}
-
-// ==================== DASHBOARD FUNCTIONS ====================
-function showEmployeeDashboard() {
-  document.getElementById('loginScreen').classList.add('hidden');
-  document.getElementById('employeeDashboard').classList.remove('hidden');
-  document.getElementById('employeeName').textContent = employees[currentUser].name;
-  hideAllEmployeeSections();
-}
-
-function showAdminDashboard() {
-  document.getElementById('loginScreen').classList.add('hidden');
-  document.getElementById('adminDashboard').classList.remove('hidden');
-
-  const titleEl = document.querySelector('#adminDashboard h2');
-  const subTitleEl = document.querySelector('#adminDashboard p');
-  const empBtn = document.querySelector('button[onclick="showEmployeeSettings()"]');
-  const delAllBtn = document.querySelector('button[onclick="deleteAllRecords()"]');
-
-  if (isSupervisor) {
-    if (titleEl) titleEl.innerHTML = 'لوحة المحاسب المالى 💰';
-    if (subTitleEl) subTitleEl.textContent = 'إدارة السجلات والبيانات المباشرة';
-    // Hide employee settings for supervisor (they have their own simplified edit button)
-    if (empBtn) empBtn.style.display = 'none';
-    // Hide 'Delete All' for supervisor for safety
-    if (delAllBtn) delAllBtn.style.display = 'none';
-  } else {
-    if (titleEl) titleEl.innerHTML = 'لوحة المدير 👑';
-    if (subTitleEl) subTitleEl.textContent = 'إدارة النظام والسجلات';
-    if (empBtn) empBtn.style.display = 'block';
-    if (delAllBtn) delAllBtn.style.display = 'flex';
-  }
-
-  hideAllAdminSections();
-  showAdminRecords();
-}
-
-function hideAllEmployeeSections() {
-  document.getElementById('newTestForm').classList.add('hidden');
-  document.getElementById('myRecords').classList.add('hidden');
-}
-
-function hideAllAdminSections() {
-  document.getElementById('adminRecords').classList.add('hidden');
-  document.getElementById('employeeSettings').classList.add('hidden');
-  document.getElementById('statistics').classList.add('hidden');
-  document.getElementById('adminNewTest').classList.add('hidden');
-}
-
-function showNewTest() {
-  hideAllEmployeeSections();
-  document.getElementById('newTestForm').classList.remove('hidden');
-}
-
-function showMyRecords() {
-  hideAllEmployeeSections();
-  document.getElementById('myRecords').classList.remove('hidden');
-  renderMyRecords();
-}
-
-function showAdminRecords() {
-  hideAllAdminSections();
-  document.getElementById('adminRecords').classList.remove('hidden');
-  populateMonthFilter(); // Ensure months are updated
-  renderAllRecords();
-}
-
-function showEmployeeSettings() {
-  hideAllAdminSections();
-  document.getElementById('employeeSettings').classList.remove('hidden');
-  renderEmployeeSettings();
-}
-
-function showStatistics() {
-  hideAllAdminSections();
-  document.getElementById('statistics').classList.remove('hidden');
-  renderStatistics();
-}
-
-function showAdminNewTest() {
-  hideAllAdminSections();
-  document.getElementById('adminNewTest').classList.remove('hidden');
-}
+// Navigation and Dashboard functions moved to app-logic.js
 
 // ==================== RECORDS RENDERING ====================
-function renderMyRecords() {
-  const container = document.getElementById('myRecordsTable');
-  const myRecords = allRecords.filter(r => r.employee_id === currentUser);
+// Records and Statistics functions moved to app-logic.js
+// ==================== TEST ENGINE START ====================
 
-  if (myRecords.length === 0) {
-    container.innerHTML = '<p class="text-center py-8" style="color: var(--text-secondary);">لا توجد سجلات بعد 📭</p>';
-    return;
-  }
-
-  container.innerHTML = `
-    <table class="w-full text-sm">
-      <thead>
-        <tr>
-          <th class="p-3 text-right">رقم الملف</th>
-          <th class="p-3 text-right">الطالب</th>
-          <th class="p-3 text-right">العمر</th>
-          <th class="p-3 text-right">الدرجة</th>
-          <th class="p-3 text-right">المستوى</th>
-          <th class="p-3 text-right">التاريخ</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${myRecords.map(r => `
-          <tr>
-            <td class="p-3 font-mono">${r.file_number}</td>
-            <td class="p-3">${r.student_name}</td>
-            <td class="p-3">${r.age}</td>
-            <td class="p-3 font-bold ${getScoreColor(r.total_score)}">${r.total_score}/100</td>
-            <td class="p-3">${r.level}</td>
-            <td class="p-3">${r.test_date}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderAllRecords() {
-  const container = document.getElementById('allRecordsTable');
-  const filterValue = document.getElementById('filterEmployee') ? document.getElementById('filterEmployee').value : 'all';
-  const monthFilter = document.getElementById('filterMonth') ? document.getElementById('filterMonth').value : 'all';
-
-  // Map records to preserve their original index for accurate deletion/viewing
-  let indexedRecords = allRecords.map((r, i) => ({ data: r, originalIndex: i }));
-
-  if (filterValue !== 'all') {
-    indexedRecords = indexedRecords.filter(item => item.data.employee_id === filterValue);
-  }
-
-  if (monthFilter !== 'all') {
-    indexedRecords = indexedRecords.filter(item => item.data.month_year === monthFilter);
-  }
-
-  if (indexedRecords.length === 0) {
-    container.innerHTML = '<p class="text-center py-8" style="color: var(--text-secondary);">لا توجد سجلات بعد 📭</p>';
-    return;
-  }
-
-  container.innerHTML = `
-    <table class="w-full text-sm">
-      <thead>
-        <tr>
-          <th class="p-3 text-right">رقم الملف</th>
-          <th class="p-3 text-right">الطالب</th>
-          <th class="p-3 text-right">العمر</th>
-          <th class="p-3 text-right">الموظف</th>
-          <th class="p-3 text-right">الدرجة</th>
-          <th class="p-3 text-right">المستوى</th>
-          <th class="p-3 text-right">المنهج</th>
-          <th class="p-3 text-right">التاريخ</th>
-          <th class="p-3 text-right no-print">إجراء</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${indexedRecords.map(({ data: r, originalIndex }) => `
-          <tr>
-            <td class="p-3 font-mono">${r.file_number}</td>
-            <td class="p-3">${r.student_name}</td>
-            <td class="p-3">${r.age}</td>
-            <td class="p-3">${employees[r.employee_id] ? employees[r.employee_id].name : (r.employee_id === 'supervisor' ? 'المحاسب المالى 💰' : r.employee_id)}</td>
-            <td class="p-3 font-bold ${getScoreColor(r.total_score)}">${r.total_score}/100</td>
-            <td class="p-3">${r.level}</td>
-            <td class="p-3 text-xs">${r.curriculum}</td>
-            <td class="p-3">${r.test_date}</td>
-            <td class="p-3 no-print flex gap-2">
-              <button onclick="viewRecord(${originalIndex})" title="عرض الشهادة" class="hover:scale-110 transition text-lg">
-                📄
-              </button>
-              <button onclick="deleteRecord(this, ${originalIndex})" title="حذف" style="color: #f45c43;" class="hover:scale-110 transition text-lg">
-                🗑️
-              </button>
-            </td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function getScoreColor(score) {
-  if (score >= 91) return 'text-green-600';
-  if (score >= 71) return 'text-blue-600';
-  if (score >= 46) return 'text-yellow-600';
-  return 'text-red-600';
-}
-
-function viewRecord(index) {
-  const record = allRecords[index];
-  if (!record) return;
-
-  // Reconstruct scores object from flat record
-  const scores = {
-    sectionA: record.section_a_score || 0,
-    sectionB: record.section_b_score || 0,
-    sectionC: record.section_c_score || 0,
-    sectionD: record.section_d_score || 0,
-    sectionE: record.section_e_score || 0,
-    sectionF: record.section_f_score || 0,
-    total: record.total_score || 0
-  };
-
-  // Switch to results screen
-  document.getElementById('adminDashboard').classList.add('hidden');
-  document.getElementById('employeeDashboard').classList.add('hidden');
-
-  // Ensure we are in a clean state
-  document.getElementById('resultsScreen').classList.remove('hidden');
-
-  // Reuse existing showResults logic
-  showResults(record, scores);
-}
-
-function deleteRecord(btn, index) {
-  if (!isAdmin && !isSupervisor) {
-    showToast('🚫 عفواً، لا تمتلك صلاحية الحذف.');
-    playWrongSound();
-    return;
-  }
-
-  const recordRow = btn.closest('tr');
-  // Removed complex string capturing to prevent syntax errors
-
-  recordRow.innerHTML = `
-    <td colspan="9" class="p-4 text-center">
-      <div class="flex items-center justify-center gap-4">
-        <span class="font-bold" style="color: var(--text-primary);">هل أنت متأكد من حذف هذا السجل؟</span>
-        <button onclick="confirmDelete(${index})" class="btn-danger px-4 py-2 rounded-lg font-semibold text-sm">
-          نعم، احذف 🗑️
-        </button>
-        <button onclick="cancelDelete()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-          إلغاء
-        </button>
-      </div>
-    </td>
-  `;
-}
-
-function confirmDelete(index) {
-  // Verify index validity
-  if (index >= 0 && index < allRecords.length) {
-    const deletedRecord = allRecords.splice(index, 1);
-    localStorage.setItem('englishTest_records', JSON.stringify(allRecords));
-
-    // Sync to Firebase if available
-    if (typeof firebaseManager !== 'undefined') {
-      firebaseManager.saveRecords(allRecords);
-    }
-
-    renderAllRecords();
-    renderStatistics();
-    showToast('تم حذف السجل بنجاح ✅');
-  } else {
-    showToast('❌ حدث خطأ أثناء الحذف: السجل غير موجود');
-    renderAllRecords(); // Refresh to show current state
-  }
-}
-
-function cancelDelete() {
-  // Simply re-render to restore state
-  renderAllRecords();
-}
-
-// ==================== DELETE ALL RECORDS (ADMIN) ====================
-function deleteAllRecords() {
-  if (!isAdmin && !isSupervisor) {
-    showToast('🚫 عفواً، لا تمتلك صلاحية الحذف.');
-    return;
-  }
-
-  if (allRecords.length === 0) {
-    showToast('لا توجد سجلات لحذفها 📥');
-    return;
-  }
-
-  const confirmMsg = '⚠️ تنبيه هام: هل أنت متأكد من حذف "جميع السجلات" نهائياً؟\n\nهذا الإجراء سيقوم بمسح كل البيانات المسجلة ولا يمكن التراجع عنه أبدأ!';
-
-  if (confirm(confirmMsg)) {
-    allRecords = [];
-    localStorage.setItem('englishTest_records', JSON.stringify(allRecords));
-
-    // Sync to Firebase if available
-    if (typeof firebaseManager !== 'undefined') {
-      firebaseManager.saveRecords(allRecords);
-    }
-
-    renderAllRecords();
-    renderStatistics();
-    showToast('تم حذف جميع السجلات بنجاح ✅');
-  }
-}
-
-// ==================== EMPLOYEE SETTINGS ====================
-function renderEmployeeSettings() {
-  const container = document.getElementById('employeeList');
-
-  // Combine regular employees with the special Accountant account for the settings view
-  const allAccounts = {
-    ...employees,
-    'supervisor': { name: 'المحاسب المالى 💰', password: SUPERVISOR_PASSWORD }
-  };
-
-  container.innerHTML = Object.entries(allAccounts).map(([id, emp]) => `
-    <div class="rounded-xl p-4" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-      <div class="flex items-center gap-3 mb-3">
-        <span class="text-2xl">${id === 'supervisor' ? '💰' : '👤'}</span>
-        <span class="font-bold text-lg">${id === 'supervisor' ? 'حساب المحاسب المالي' : id}</span>
-      </div>
-      <div class="space-y-2">
-        <div>
-          <label class="text-sm" style="color: var(--text-secondary);" for="empName_${id}">الاسم</label>
-          <input type="text" id="empName_${id}" value="${emp.name}" class="w-full p-2 rounded-lg outline-none" placeholder="مثال: عمر، أحمد، محمد" ${isSupervisor && id !== 'supervisor' ? 'disabled' : ''} />
-        </div>
-        <div>
-          <label class="text-sm" style="color: var(--text-secondary);" for="empPass_${id}">كلمة المرور</label>
-          <input type="text" id="empPass_${id}" value="${emp.password}" class="w-full p-2 rounded-lg outline-none" ${isSupervisor && id !== 'supervisor' ? 'disabled' : ''} />
-        </div>
-        ${(!isSupervisor || id === 'supervisor') ? `
-        <button onclick="saveEmployee('${id}')" class="btn-primary w-full py-2 rounded-lg font-semibold text-sm hover:scale-105 transition">
-          حفظ التغييرات ✅
-        </button>
-        ` : '<p class="text-xs text-center p-2 opacity-50">لا يمكن تعديل بيانات الموظفين بواسطة المحاسب</p>'}
-      </div>
-    </div>
-  `).join('');
-}
-
-function saveEmployee(id) {
-  const name = document.getElementById(`empName_${id}`).value.trim();
-  const password = document.getElementById(`empPass_${id}`).value.trim();
-
-  if (!name || !password) {
-    showToast('الرجاء ملء جميع الحقول ⚠️');
-    return;
-  }
-
-  if (id === 'supervisor') {
-    SUPERVISOR_PASSWORD = password;
-    localStorage.setItem('englishTest_supervisorPass', password);
-  } else {
-    employees[id].name = name;
-    employees[id].password = password;
-    localStorage.setItem('englishTest_employees', JSON.stringify(employees));
-  }
-
-  // Sync to Firebase if available
-  if (typeof firebaseManager !== 'undefined') {
-    if (id !== 'supervisor') {
-      firebaseManager.saveEmployees(employees);
-    }
-    // Note: If you want to sync supervisor pass to cloud, you'd need another ref
-  }
-
-  showToast(`تم حفظ بيانات ${name} بنجاح ✅`);
-  populateAllEmployeeDropdowns();
-}
-
-// ==================== BACKUP & RESTORE ====================
-async function exportData() {
-  const monthFilter = document.getElementById('filterMonth').value;
-  const employeeFilter = document.getElementById('filterEmployee').value;
-
-  let recordsToExport = allRecords;
-  let filenameSuffix = "كل_السجلات";
-
-  if (monthFilter !== 'all') {
-    recordsToExport = recordsToExport.filter(r => r.month_year === monthFilter);
-    const [year, month] = monthFilter.split('-');
-    const monthNames = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
-    filenameSuffix = `${monthNames[parseInt(month) - 1]}_${year}`;
-  }
-
-  if (employeeFilter !== 'all') {
-    recordsToExport = recordsToExport.filter(r => r.employee_id === employeeFilter);
-    filenameSuffix += `_${employeeFilter}`;
-  }
-
-  if (recordsToExport.length === 0) {
-    showToast('لا توجد سجلات للتصدير في هذا الاختيار 📥');
-    return;
-  }
-
-  const data = {
-    records: recordsToExport,
-    exportDate: new Date().toISOString(),
-    filterMonth: monthFilter,
-    filterEmployee: employeeFilter,
-    version: '1.1'
-  };
-
-  const jsonString = JSON.stringify(data, null, 2);
-  const fileName = `نسخة_احتياطية_${filenameSuffix}.json`;
-
-  // Try "Save As" using File System Access API
-  if ('showSaveFilePicker' in window) {
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: fileName,
-        types: [{
-          description: 'JSON Backup File',
-          accept: { 'application/json': ['.json'] },
-        }],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(jsonString);
-      await writable.close();
-      showToast('تم حفظ الملف بنجاح 💾');
-      return;
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.warn('File picker failed, falling back to download:', err);
-    }
-  }
-
-  // Fallback to traditional download (Save As behavior depends on browser settings)
-  const blob = new Blob([jsonString], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast('تم تصدير النسخة الاحتياطية (تحميل) 💾');
-}
-
-function triggerImport() {
-  document.getElementById('importFile').click();
-}
-
-function handleImport(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    try {
-      let content = e.target.result;
-      // Remove possible BOM or leading/trailing whitespace
-      content = content.trim();
-      if (content.charCodeAt(0) === 0xFEFF) {
-        content = content.slice(1);
-      }
-
-      const data = JSON.parse(content);
-      let recordsToImport = [];
-
-      // Support various formats
-      if (Array.isArray(data)) {
-        recordsToImport = data;
-      } else if (data.records && Array.isArray(data.records)) {
-        recordsToImport = data.records;
-      } else if (data.data && data.data.records && Array.isArray(data.data.records)) {
-        recordsToImport = data.data.records;
-      } else {
-        // Search for any array property
-        for (const key in data) {
-          if (Array.isArray(data[key]) && data[key].length > 0) {
-            recordsToImport = data[key];
-            break;
-          }
-        }
-      }
-
-      if (recordsToImport.length === 0) {
-        showToast('❌ لم يتم العثور على سجلات في هذا الملف');
-        return;
-      }
-
-      if (confirm(`هل أنت متأكد من استيراد ${recordsToImport.length} سجل؟ سيتم إضافة السجلات الجديدة إلى السجلات الحالية.`)) {
-        const existingNumbers = new Set(allRecords.map(r => r.file_number));
-        const newRecords = recordsToImport.filter(r => !existingNumbers.has(r.file_number));
-
-        allRecords = [...allRecords, ...newRecords];
-        localStorage.setItem('englishTest_records', JSON.stringify(allRecords));
-
-        if (typeof firebaseManager !== 'undefined') {
-          firebaseManager.saveRecords(allRecords);
-        }
-
-        renderAllRecords();
-        renderStatistics();
-        showToast(`✅ تم استيراد ${newRecords.length} سجل جديد بنجاح`);
-      }
-    } catch (err) {
-      console.error('Import error:', err);
-      showToast('❌ فشل في قراءة الملف: تأكد من أنه ملف JSON صالح');
-    }
-  };
-  reader.onerror = () => showToast('❌ خطأ في قراءة ملف الاستعادة');
-  reader.readAsText(file);
-  event.target.value = ''; // Reset for next time
-}
-
-// ==================== STATISTICS ====================
-function renderStatistics() {
-  const container = document.getElementById('statsContent');
-
-  const totalTests = allRecords.length;
-  const avgScore = totalTests > 0 ? Math.round(allRecords.reduce((sum, r) => sum + r.total_score, 0) / totalTests) : 0;
-
-  const levelCounts = {};
-  allRecords.forEach(r => {
-    levelCounts[r.level] = (levelCounts[r.level] || 0) + 1;
-  });
-
-  const employeeCounts = {};
-  allRecords.forEach(r => {
-    employeeCounts[r.employee_id] = (employeeCounts[r.employee_id] || 0) + 1;
-  });
-
-  container.innerHTML = `
-    <div class="rounded-xl p-4 text-center" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-      <p class="text-3xl font-bold" style="color: #667eea;">${totalTests}</p>
-      <p class="text-sm" style="color: var(--text-secondary);">إجمالي الاختبارات</p>
-    </div>
-    <div class="rounded-xl p-4 text-center" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-      <p class="text-3xl font-bold" style="color: #38ef7d;">${avgScore}</p>
-      <p class="text-sm" style="color: var(--text-secondary);">متوسط الدرجات</p>
-    </div>
-    <div class="rounded-xl p-4 text-center col-span-2" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-      <p class="text-lg font-bold mb-2" style="color: #764ba2;">توزيع المستويات</p>
-      <div class="text-sm space-y-1">
-        ${Object.entries(levelCounts).map(([level, count]) => `
-          <div class="flex justify-between">
-            <span>${level}</span>
-            <span class="font-bold">${count}</span>
-          </div>
-        `).join('') || '<p style="color: var(--text-secondary);">لا توجد بيانات</p>'}
-      </div>
-    </div>
-    <div class="rounded-xl p-4 text-center col-span-2 md:col-span-4" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-      <p class="text-lg font-bold mb-2" style="color: #f5576c;">اختبارات كل موظف</p>
-      <div class="flex flex-wrap justify-center gap-4">
-        ${Object.entries(employeeCounts).map(([emp, count]) => `
-          <div class="rounded-lg px-4 py-2" style="background: var(--bg-card); border: 2px solid var(--border-color);">
-            <span class="font-bold">${emp}:</span> ${count}
-          </div>
-        `).join('') || '<p style="color: var(--text-secondary);">لا توجد بيانات</p>'}
-      </div>
-    </div>
-  `;
-}
-
-// ==================== FORGOT PASSWORD FUNCTIONS ====================
-function showForgotPassword() {
-  document.getElementById('forgotPasswordModal').classList.remove('hidden');
-  document.getElementById('forgotEmployeeSelect').value = '';
-  document.getElementById('masterKeyInput').value = '';
-  document.getElementById('recoveredPassword').classList.add('hidden');
-  document.getElementById('recoveryError').classList.add('hidden');
-}
-
-function hideForgotPassword() {
-  document.getElementById('forgotPasswordModal').classList.add('hidden');
-}
-
-function recoverPassword() {
-  const employeeId = document.getElementById('forgotEmployeeSelect').value;
-  const adminPassword = document.getElementById('masterKeyInput').value;
-
-  if (!employeeId) {
-    showToast('الرجاء اختيار الموظف');
-    return;
-  }
-
-  if (adminPassword !== ADMIN_PASSWORD) {
-    document.getElementById('recoveryError').classList.remove('hidden');
-    document.getElementById('masterKeyInput').classList.add('shake');
-    setTimeout(() => document.getElementById('masterKeyInput').classList.remove('shake'), 300);
-    return;
-  }
-
-  document.getElementById('recoveryError').classList.add('hidden');
-
-  let password = '';
-  if (employeeId === 'admin') {
-    password = ADMIN_PASSWORD;
-  } else if (employeeId === 'supervisor') {
-    password = SUPERVISOR_PASSWORD;
-  } else {
-    password = employees[employeeId] ? employees[employeeId].password : 'ط؛ظٹط± ظ…ظˆط¬ظˆط¯';
-  }
-
-  document.getElementById('recoveredPasswordText').textContent = password;
-  document.getElementById('recoveredPassword').classList.remove('hidden');
-  document.getElementById('recoveredPassword').classList.add('celebrate');
-  setTimeout(() => document.getElementById('recoveredPassword').classList.remove('celebrate'), 500);
-}
-
-// ==================== TEST FUNCTIONS ====================
 function startTest() {
   const name = document.getElementById('studentName').value.trim();
   const age = parseInt(document.getElementById('studentAge').value);
@@ -1053,11 +273,12 @@ function startAdminTest() {
 
   // Map Level Names to Stages
   const stageMap = { 1: 1, 2: 201, 3: 301 };
-  const showFeedback = true; // Admin test defaults to feedback on, or we could add a toggle there too. Assuming true for now.
-  initializeTest(name, age, employeeId, stageMap[startLevel], showFeedback);
+  const showFeedback = true;
+  const skipSave = document.getElementById('adminSkipSave')?.checked || false;
+  initializeTest(name, age, employeeId, stageMap[startLevel], showFeedback, true, skipSave);
 }
 
-function initializeTest(name, age, employeeId, startStage = 1, showFeedback = true) {
+function initializeTest(name, age, employeeId, startStage = 1, showFeedback = true, isAdminTest = false, skipSave = false) {
   const generatedQuestions = generateRandomQuestions(age, startStage);
 
   testState = {
@@ -1070,15 +291,31 @@ function initializeTest(name, age, employeeId, startStage = 1, showFeedback = tr
     currentStage: startStage,
     startStage: startStage, // Remember where we started
     history: [], // Store results of previous stages
+    lockedResult: null, // Achievement Lock: Best score reached so far
     startTime: Date.now(),
-    timerInterval: null,
     timerInterval: null,
     timeLimit: getTimeLimit(age, generatedQuestions.length),
     showInstantFeedback: showFeedback,
-    isExtraChance: false
+    isExtraChance: false,
+    isAdminTest: isAdminTest,
+    skipSave: skipSave,
+    isTransitioning: false,
+    isFinished: false
   };
 
   testState.answers = new Array(testState.questions.length).fill(null);
+
+  // Admin Magic: Show auto-solve button if admin is testing
+  const magicZone = document.getElementById('adminMagicZone');
+  if (magicZone) {
+    if (isAdminTest) {
+      magicZone.classList.remove('hidden');
+      magicZone.classList.add('flex');
+    } else {
+      magicZone.classList.add('hidden');
+      magicZone.classList.remove('flex');
+    }
+  }
 
   document.getElementById('employeeDashboard').classList.add('hidden');
   document.getElementById('adminDashboard').classList.add('hidden');
@@ -1134,12 +371,28 @@ if (typeof adaptiveTesting !== 'undefined') {
   adaptiveTesting.updateDifficultyIndicator = function () {
     const badge = document.getElementById('difficultyBadge');
     if (badge) {
-      const levels = ['', 'Phonics', 'Beginner', 'Elementary', 'Intermediate', 'Advanced', 'Professional'];
+      const currentStage = (testState && testState.currentStage) || 1;
+      let levels;
+
+      // Smart Level Labels based on Stage
+      if (currentStage < 100) { // Phonics (1-5)
+        levels = ['', 'Starter', 'Phonics (A)', 'Phonics (B)', 'Phonics (C)', 'Beginner', 'Elementary'];
+      } else if (currentStage < 300) { // Let's Go 1-3
+        levels = ['', 'Beginner', 'Elementary', 'Intermediate', 'Intermediate+', 'Advanced', 'Expert'];
+      } else { // Let's Go 4-6 / Elite
+        levels = ['', 'Intermediate', 'Advanced', 'Professional', 'Elite', 'Master', 'Legendary'];
+      }
+
       badge.textContent = levels[this.currentDifficulty] || 'General';
 
       // Update color based on difficulty
       const colors = ['', '#38ef7d', '#667eea', '#ffd700', '#ff9f43', '#f5576c', '#764ba2'];
       badge.style.background = colors[this.currentDifficulty] || '#667eea';
+
+      // Safety check: Avoid high-end terms for Phonics
+      if (currentStage < 100 && this.currentDifficulty >= 5) {
+        badge.textContent = 'Expert 🎓';
+      }
     }
   };
 }
@@ -1147,57 +400,48 @@ if (typeof adaptiveTesting !== 'undefined') {
 function tagQuestionsByLevel() {
   if (typeof questionBank === 'undefined') return;
 
-  // Section A - All Basic Phonics (D1-2)
-  questionBank.sectionA.forEach(q => q.difficulty = (q.type === 'typing' ? 2 : 1));
+  // Section A - All Basic Phonics (D1)
+  questionBank.sectionA.forEach(q => q.difficulty = 1);
 
-  // Section B - Pronunciation (D2-3)
+  // Section B - Pronunciation (D1-2)
   questionBank.sectionB.forEach(q => q.difficulty = 2);
 
-  // Section C - Listening (D2-3)
+  // Section C - Listening (D2)
   questionBank.sectionC.forEach(q => q.difficulty = 2);
 
-  // Section D (Reading)
+  // Section D (Reading) - SMART TAGGING
   questionBank.sectionD.forEach((q, i) => {
-    if (i < 20) q.difficulty = 2;
-    else if (i < 40) q.difficulty = 3;
-    else if (i < 50) q.difficulty = 4; // LG 4
-    else q.difficulty = 6; // LG 6 Reading (Indices 50+)
+    // 117-151 are basic descriptive questions (Easy)
+    if (i <= 35) q.difficulty = 2;
+    // 153-162 are Inferencing/Comprehension (Elite)
+    else q.difficulty = 6;
   });
 
   // Section E (Writing)
   questionBank.sectionE.forEach((q, i) => {
-    // Only scrambled sentences are truly advanced in writing section
     if (q.isScrambled || q.q.includes('رتب')) {
       q.difficulty = 5;
     } else if (q.isOpposite) {
       q.difficulty = 3;
     } else {
-      q.difficulty = 1 + (i % 2); // 1 or 2
+      q.difficulty = 1;
     }
   });
 
-  // Section F (Grammar/Vocab - THE BIG POOL)
+  // Section F (Grammar/Vocab) - THE BIG POOL
   questionBank.sectionF.forEach((q, i) => {
-    // Precise Identification:
-    // Index 191 to 290 are the LG 6 questions (Advanced)
-    if (i >= 191 && i <= 290) {
+    if (i >= 191 && i <= 290) {      // LG 6 (Elite)
       q.difficulty = 6;
-    }
-    // Index 140 to 190 are LG 5
-    else if (i >= 140 && i <= 190) {
+    } else if (i >= 140 && i <= 190) { // LG 5 (Advanced)
       q.difficulty = 5;
-    }
-    // LG 4 questions (appended at the end, index 291+)
-    else if (i > 290) {
+    } else if (i > 290) {              // LG 4 (Intermediate)
       q.difficulty = 4;
-    }
-    // Everything else (0-139) is basic LG 1-3
-    else {
+    } else {                           // LG 1-3 (Elementary)
       q.difficulty = (i < 50 ? 2 : 3);
     }
   });
 
-  console.log('Professional Level Tagging Refined.');
+  console.log('✅ Question Purge Complete: High-level filters applied.');
 }
 
 // ADAPTIVE QUESTION GENERATION
@@ -1226,15 +470,15 @@ function generateRandomQuestions(age, stage = 1) {
   const isInitial = [1, 201, 301].includes(stage);
 
   if (isInitial) {
-    // Initial Test: 15 to 20
+    // Initial Test: Balanced by age for fairness (increased count)
+    if (age <= 7) config.count = 25;      // 5-7 years
+    else if (age <= 11) config.count = 30; // 8-11 years
+    else config.count = 33;                // 12-15 years
+  } else {
+    // Supplementary Test (Next Stages): Balanced by age
     if (age <= 7) config.count = 15;
     else if (age <= 11) config.count = 18;
     else config.count = 20;
-  } else {
-    // Supplementary Test (Next Stages): 10 to 15
-    if (age <= 7) config.count = 10;
-    else if (age <= 11) config.count = 12;
-    else config.count = 15;
   }
 
   const questions = [];
@@ -1247,14 +491,36 @@ function generateRandomQuestions(age, stage = 1) {
     ).map(q => ({
       ...q,
       section: secKey.replace('section', ''),
-      sectionName: `المرحلة ${stage}`,
+      sectionName: `المرحلة ${stage} `,
       points: (stage === 1 ? 5 : 1)
     }));
     combinedPool = combinedPool.concat(sectionPool);
   });
 
+  // INTEGRATE CUSTOM QUESTIONS
+  if (typeof adminQM !== 'undefined' && adminQM.customQuestions && adminQM.customQuestions.length > 0) {
+    adminQM.customQuestions.forEach(q => {
+      if (config.sections.includes(q.section)) {
+        // Only add if not already in test
+        if (!testState.questions || !testState.questions.some(prev => prev.q === q.q)) {
+          // Rule: Custom questions are treated as Difficulty 6 (Advanced)
+          // or they can match the pool's difficulty if it's the target
+          if (config.diffs.includes(6) || config.diffs.includes(5)) {
+            combinedPool.push({
+              ...q,
+              section: q.section.replace('section', ''),
+              sectionName: `إضافي`,
+              points: 2,
+              difficulty: 6 // Force advanced
+            });
+          }
+        }
+      }
+    });
+  }
+
   if (combinedPool.length < config.count) {
-    console.warn(`Not enough questions for stage ${stage}. Wanted ${config.count}, found ${combinedPool.length}`);
+    console.warn(`Not enough questions for stage ${stage}.Wanted ${config.count}, found ${combinedPool.length} `);
   }
 
   return shuffleArray(combinedPool).slice(0, config.count);
@@ -1271,10 +537,10 @@ function shuffleArray(array) {
 
 function getTimeLimit(age, questionCount) {
   // Increased seconds per question for a more relaxed and professional experience
-  let secondsPerQuestion = 30;
-  if (age >= 5 && age <= 8) secondsPerQuestion = 50;  // 50s for younger kids
-  if (age >= 9 && age <= 11) secondsPerQuestion = 40; // 40s for intermediate
-  if (age >= 12 && age <= 15) secondsPerQuestion = 35; // 35s for advanced
+  let secondsPerQuestion = 40;
+  if (age >= 5 && age <= 8) secondsPerQuestion = 60;  // 60s for younger kids
+  if (age >= 9 && age <= 11) secondsPerQuestion = 55; // 55s for intermediate
+  if (age >= 12 && age <= 15) secondsPerQuestion = 45; // 45s for advanced
 
   return questionCount * secondsPerQuestion;
 }
@@ -1314,36 +580,43 @@ function updateTimerDisplay(remaining) {
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   document.getElementById('timerDisplay').textContent =
-    `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} `;
 }
 
 function showQuestion(index) {
+  testState.isTransitioning = false;
   testState.currentIndex = index;
   const question = testState.questions[index];
+
+  if (!question) {
+    console.error("Critical: Question at index " + index + " is undefined. Finishing test to prevent freeze.");
+    finishTest(true);
+    return;
+  }
+
   const container = document.getElementById('questionArea');
 
   // Update progress & Question Ring
   const indexDisp = index + 1;
   const total = testState.questions.length;
 
-  // Update text counters (support all UI variations)
+  // Update text counters
   if (document.getElementById('currentQuestion')) document.getElementById('currentQuestion').textContent = indexDisp;
   if (document.getElementById('currentQuestionDisplay')) document.getElementById('currentQuestionDisplay').textContent = indexDisp;
   if (document.getElementById('totalQuestions')) document.getElementById('totalQuestions').textContent = total;
   if (document.getElementById('totalQuestionsCount')) document.getElementById('totalQuestionsCount').textContent = total;
   if (document.getElementById('answeredQuestions')) document.getElementById('answeredQuestions').textContent = index;
-  if (document.getElementById('remainingQuestions')) document.getElementById('remainingQuestions').textContent = total - indexDisp;
+  // Remaining questions is handled by updateQuestionStats to ensure consistency
 
-  // Update Progress Bar (Top)
-  // Use index / total for bar (so it fills up as we go)
+
+  // Update Progress Bar
   const progressPercent = (indexDisp / total) * 100;
   document.getElementById('progressBar').style.width = progressPercent + '%';
 
-  // Update Question Ring (New Circular Counter)
+  // Update Question Ring
   const questionRing = document.getElementById('questionRing');
   if (questionRing) {
-    const circum = 264; // r=42 -> 2*pi*42 ~= 264
-    // Fill the ring based on progress
+    const circum = 264;
     const offset = circum - ((indexDisp / total) * circum);
     questionRing.style.strokeDashoffset = offset;
   }
@@ -1363,24 +636,20 @@ function showQuestion(index) {
   const isEnglishStart = /^[A-Za-z]/.test(displayQ);
 
   if (isEnglishStart) {
-    // If starts with English, force LTR for the whole question
     displayQ = `<span dir="ltr" class="inline-block">${displayQ}</span>`;
   } else if (displayQ.includes(':')) {
     const parts = displayQ.split(':');
     const prompt = parts[0].trim();
     const content = parts.slice(1).join(':').trim();
-    // Wrap English part in LTR span to fix punctuation position
     displayQ = `${prompt}: <span dir="ltr" class="inline-block px-1">${content}</span>`;
   }
 
   const displayVal = question.display ? question.display.replace(/___/g, '....') : '';
 
-  // Dynamic Image Logic: Try to find a photo for the word in assets/imag/
-  // Prioritize question.word for listening tasks, then display text
+  // Dynamic Image Logic
   const targetImage = (question.word || question.display || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
   let possibleImagePath = targetImage ? `assets/imag/${targetImage}.png` : '';
 
-  // Default Image for Listening Section if no specific word image is found
   if (question.section === 'C' && !targetImage) {
     possibleImagePath = `assets/imag/listening_icon.png`;
   }
@@ -1388,7 +657,7 @@ function showQuestion(index) {
   // BALANCED SIZE - COMPACT MODE
   let html = `<div class="w-full">`;
 
-  // Question Text - Compact
+  // Question Text
   html += `
     <div class="text-center mb-1">
       <h3 class="text-xl md:text-2xl font-bold leading-tight text-gray-800">
@@ -1397,7 +666,7 @@ function showQuestion(index) {
     </div>
   `;
 
-  // Display Image - Compact Size
+  // Display Image
   if (possibleImagePath) {
     html += `
       <div class="flex justify-center my-1">
@@ -1409,7 +678,7 @@ function showQuestion(index) {
     `;
   }
 
-  // Display opposite word question - Compact
+  // Display opposite word question
   if (question.isOpposite && question.oppositeWord) {
     const targetPlaceholder = question.placeholder !== undefined ? question.placeholder : "....";
     html += `
@@ -1420,7 +689,7 @@ function showQuestion(index) {
       </div>
     `;
   } else if (displayVal && question.section === 'C') {
-    // For listening section - Compact
+    // For listening section
     html += `
       <div class="flex justify-center my-2">
         <div class="font-black text-indigo-600" style="line-height: 1; font-size: 5rem;">${displayVal}</div>
@@ -1433,7 +702,7 @@ function showQuestion(index) {
     `;
   }
 
-  // Audio button - Compact
+  // Audio button
   if (question.word) {
     html += `
       <div class="flex justify-center my-2">
@@ -1445,7 +714,7 @@ function showQuestion(index) {
     `;
   }
 
-  // OPTIONS - Compact Buttons
+  // OPTIONS
   if (question.type === 'choice') {
     const shuffledOptions = shuffleArray([...question.options]);
     html += `
@@ -1459,7 +728,6 @@ function showQuestion(index) {
       </div>
     `;
   } else if (question.type === 'typing') {
-    // Determine placeholder
     let placeholderText = "اكتب الإجابة...";
     if (question.placeholder !== undefined) {
       placeholderText = question.placeholder;
@@ -1485,18 +753,16 @@ function showQuestion(index) {
   }
 
   html += `</div>`;
-
   container.innerHTML = html;
 
   if (question.type === 'typing') {
     setTimeout(() => document.getElementById('typingAnswer')?.focus(), 100);
   }
-
-  // --- AUTO SPEAK LOGIC DISABLED AS PER USER REQUEST ---
-  // If the user wants to listen, they can click the designated button.
 }
 
 function selectOption(button, option) {
+  if (testState.isTransitioning) return;
+  testState.isTransitioning = true;
   // Disable all buttons to prevent multiple clicks
   document.querySelectorAll('.option-btn').forEach(btn => {
     btn.style.pointerEvents = 'none';
@@ -1587,6 +853,8 @@ function saveTypingAnswer(value) {
 }
 
 function checkTypingAnswer() {
+  if (testState.isTransitioning) return;
+  testState.isTransitioning = true;
   const question = testState.questions[testState.currentIndex];
   const userAnswer = testState.answers[testState.currentIndex];
 
@@ -1639,9 +907,9 @@ function checkTypingAnswer() {
       correctAnswerDiv.style.background = 'var(--bg-success)';
       correctAnswerDiv.style.color = 'white';
       correctAnswerDiv.innerHTML = `
-        <p class="font-semibold mb-2">الإجابة الصحيحة:</p>
-        <p class="text-2xl font-bold">${question.answer}</p>
-        `;
+    < p class="font-semibold mb-2" > الإجابة الصحيحة:</p >
+      <p class="text-2xl font-bold">${question.answer}</p>
+  `;
       input.parentElement.appendChild(correctAnswerDiv);
 
       setTimeout(() => input.classList.remove('shake'), 300);
@@ -1719,22 +987,68 @@ function playCorrectSound() {
 }
 
 function playWrongSound() {
-  console.log('Playing wrong sound...');
-  const sound = audioManager.sounds.wrong;
-  if (sound) {
-    sound.currentTime = 0;
-    sound.play().then(() => {
-      console.log('Wrong sound played successfully');
-    }).catch(err => {
-      console.error('Failed to play wrong sound:', err);
-      // Try with a simple beep as ultimate fallback
-      audioManager.play('skip'); // Use skip sound as fallback
-    });
-  }
+  audioManager.play('wrong');
 }
 
 function playClapSound() {
   audioManager.play('clap');
+}
+
+// ADMIN DEBUG TOOL: Auto-Correct Current Question
+// ADMIN DEBUG TOOL: Auto-Correct Current Question
+function autoSolveQuestion() {
+  if (!testState.isAdminTest) return;
+  if (testState.isTransitioning || testState.isFinished) return;
+
+  const isChallenge = (typeof testState !== 'undefined' && testState.isChallenge);
+  const q = isChallenge ? testState.challengeQuestions[testState.challengeIndex] : testState.questions[testState.currentIndex];
+  if (!q) return;
+
+  showToast('🪄 Admin Magic: Solving correctly...');
+
+  // FORCE CORRECT ANSWER IN STATE (Data Integrity First)
+  const answerToSet = q.answer; // Ensure we use the exact expected answer string
+  if (isChallenge) {
+    if (testState.challengeAnswers) testState.challengeAnswers[testState.challengeIndex] = answerToSet;
+  } else {
+    if (testState.answers) testState.answers[testState.currentIndex] = answerToSet;
+  }
+
+  // Now handle UI Visuals
+  if (q.type === 'choice') {
+    const btns = document.querySelectorAll('.option-btn');
+    let found = false;
+
+    // 1. Try exact text match
+    btns.forEach(btn => {
+      if (btn.textContent.trim().toUpperCase() === q.answer.trim().toUpperCase()) {
+        found = true;
+        if (isChallenge && typeof selectChallengeOption === 'function') selectChallengeOption(btn, q.answer);
+        else selectOption(btn, q.answer);
+      }
+    });
+
+    // 2. Fallback: If visual mismatch, click the first one but we ALREADY forced the correct answer in state
+    if (!found && btns.length > 0) {
+      // We pass q.answer again just to be safe, though state is already set
+      if (isChallenge && typeof selectChallengeOption === 'function') selectChallengeOption(btns[0], q.answer);
+      else selectOption(btns[0], q.answer);
+    }
+
+  } else if (q.type === 'typing') {
+    const input = document.getElementById('typingAnswer');
+    if (input) {
+      input.value = q.answer;
+      // Trigger logical checks to update UI (colors, confetti)
+      if (isChallenge) {
+        if (typeof saveChallengeTypingAnswer === 'function') saveChallengeTypingAnswer(q.answer);
+        if (typeof checkChallengeTypingAnswer === 'function') checkChallengeTypingAnswer();
+      } else {
+        saveTypingAnswer(q.answer);
+        checkTypingAnswer();
+      }
+    }
+  }
 }
 
 function createConfetti() {
@@ -1759,99 +1073,147 @@ function createConfetti() {
 }
 
 function finishTest(force = false) {
-  // Ladder Strategy Logic: Check if we should advance to next stage
-  const currentStageCount = testState.questions.length;
-  const currentStageQuestions = testState.questions;
-  const currentStageAnswers = testState.answers;
+  if (testState.isFinished && !force) return;
+  testState.isFinished = true;
+  testState.isTransitioning = true;
 
-  let correctInStage = 0;
-  currentStageQuestions.forEach((q, i) => {
-    if (currentStageAnswers[i] && currentStageAnswers[i].toUpperCase().trim() === q.answer.toUpperCase().trim()) {
-      correctInStage++;
-    }
-  });
+  if (testState.timerInterval) clearInterval(testState.timerInterval);
 
-  const stageAccuracy = (correctInStage / (currentStageQuestions.length || 1)) * 100;
-
-  // LADDER STRATEGY & IMPROVEMENT LOGIC
-  if (!force && !testState.isExtraChance) {
-    // 1. Mastery Condition (> 88%): Finish or Move Next immediately
-    if (stageAccuracy >= 88) {
-      // Proceed to normal success/handling logic
-    }
-    // 2. Improvement Chance Condition (70% - 87%): Trigger Ladder
-    else if (stageAccuracy >= 70 && stageAccuracy < 88) {
-      triggerImprovementChance();
-      return;
-    }
-    // 3. Fail Condition (< 70%): Normal finish (will likely end test)
-  }
-
-  // Final End Decision Logic
-  let hasNextStage = false;
-  // If we are master of this stage, check if there is a next one
-  // Note: We use 75 as standard pass, but 88 was mastery. Both pass.
-  if (stageAccuracy >= 75) {
-    // Level 1 Path
-    if (testState.startStage === 1 && testState.currentStage < 5) hasNextStage = true;
-    // Level 2 Path
-    if (testState.startStage === 201 && testState.currentStage === 201) hasNextStage = true;
-    // Level 3 Path
-    if (testState.startStage === 301 && testState.currentStage === 301) hasNextStage = true;
-  }
-
-  // If force is true, we ignore hasNextStage and finish for real
-  if (!force && hasNextStage) {
-    handleStageSuccess(stageAccuracy);
-    return;
-  }
-
-  testState.isSuccessScreen = false; // Reset screen state
-
-  // Final End of Test - Update Header Stats for finality
-  updateQuestionStats(true);
-  clearInterval(testState.timerInterval);
-  audioManager.play('finished');
-
-  // Celebration for finishing LG 6 stage or high overall score
-  if (testState.currentStage === 5 || stageAccuracy >= 90) {
-    setTimeout(() => {
-      playClapSound();
-      createConfetti();
-      audioManager.play('celebration');
-    }, 1000);
-  }
-
+  // 1. Calculate stats for the GLOBAL result
   const scores = calculateScores();
 
-  // Highest stage reached in this test session
-  let maxStage = testState.currentStage;
-  testState.history.forEach(h => {
-    if (h.stage > maxStage && h.stage < 100) maxStage = h.stage;
-    if (h.stage === 201) maxStage = 2; // Map internal IDs to logical stages for capping
-    if (h.stage === 301) maxStage = 5;
-  });
-  if (testState.currentStage === 201) maxStage = Math.max(maxStage, 2);
-  if (testState.currentStage === 301) maxStage = Math.max(maxStage, 5);
+  // 2. Map stages for internal logic (Moved below)
+  const mapStageToLogical = (s) => (s === 201 ? 2 : (s === 301 ? 5 : s));
 
-  const levelData = getLevelAndCurriculum(scores.total, maxStage);
-  const fileNumber = generateFileNumber();
 
-  const resultData = {
-    file_number: fileNumber,
-    student_name: testState.studentName,
-    age: testState.age,
-    employee_id: testState.employeeId,
-    total_score: scores.total,
-    level: levelData.level,
-    curriculum: levelData.curriculum,
-    test_date: new Date().toLocaleDateString('ar-EG'),
-    month_year: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
-    time_taken: Math.floor((Date.now() - testState.startTime) / 1000)
-  };
 
-  saveAndShowResults(resultData, scores);
+  // 3. Handle Challenge Result (Success or Failure)
+  if (testState.isExtraChance) {
+    // Determine accuracy of THE CHALLENGE ONLY
+    const challengeQs = testState.questions.filter(q => q.isImprovement);
+
+    if (challengeQs.length > 0) {
+      const challengeStartIndex = testState.questions.indexOf(challengeQs[0]);
+
+      let challengeCorrect = 0;
+      challengeQs.forEach((q, i) => {
+        const ans = testState.answers[challengeStartIndex + i];
+        if (ans && ans.toUpperCase().trim() === q.answer.toUpperCase().trim()) {
+          challengeCorrect++;
+        }
+      });
+      const challengeAccuracy = (challengeCorrect / (challengeQs.length || 1)) * 100;
+
+      if (challengeAccuracy >= 75) {
+        console.log('🎉 Challenge Success!');
+        // Update logic state based on jump type
+        if (testState.improvementType === 'jump_to_lg13') {
+          testState.currentStage = 201;
+        } else if (testState.improvementType === 'jump_to_lg46') {
+          testState.currentStage = 301;
+        }
+
+        // Save this success in history
+        testState.history.push({
+          stage: testState.currentStage,
+          type: testState.improvementType,
+          scores: { ...scores }
+        });
+
+        testState.isExtraChance = false;
+        // Don't finish yet, let the rules decide if another challenge should be offered
+      } else {
+        console.log('🔒 Challenge Failed: Reverting to locked best result');
+        testState.isTransitioning = false;
+        if (testState.lockedResult) {
+          saveAndShowResults(undefined, testState.lockedResult.scores);
+          return;
+        }
+        testState.isExtraChance = false;
+      }
+    }
+  }
+
+  // 4. SMART IMPROVEMENT CHANCE SYSTEM (Trigger Rules)
+  // RECALCULATE max stage and level after challenge result
+  const historyStages = (testState.history || [])
+    .filter(h => h.stage !== undefined)
+    .map(h => mapStageToLogical(h.stage));
+
+  const maxLogicalStage = Math.max(mapStageToLogical(testState.currentStage || 1), ...historyStages);
+  testState.maxLogicalStage = maxLogicalStage;
+  const levelData = getLevelAndCurriculum(scores, maxLogicalStage);
+
+  if (!force) {
+    // 🛡️ ELITE TERMINATION RULE (The fix you requested)
+    // If student reached the final level (Stage 5 / Let's Go 6 range) 
+    // and has 90% or more, FINISH IMMEDIATELY.
+    if (maxLogicalStage >= 5 && scores.total >= 90) {
+      console.log('🏆 Elite Performance: Ending test at maximum level.');
+      // Proceed to results
+    } else {
+      const isPhonics = testState.startStage === 1;
+
+      // Rule A: High Phonics → Offer LG 1-3 Jump
+      if (isPhonics && scores.total >= 75 && maxLogicalStage < 2 && !testState.isExtraChance) {
+        testState.isTransitioning = false; // RESET BEFORE REDIRECT
+        triggerImprovementChance('jump_to_lg13');
+        return;
+      }
+
+      // Rule B: Reached LG 1-3 Level → Offer LG 4-6 Jump
+      if ((levelData.level.includes("Let's Go 1") || levelData.level.includes("Let's Go 3") || testState.currentStage === 201)
+        && scores.total >= 75 && maxLogicalStage < 5) {
+        testState.isTransitioning = false; // RESET BEFORE REDIRECT
+        triggerImprovementChance('jump_to_lg46');
+        return;
+      }
+    }
+  }
+
+
+
+  // 5. FINAL PROCEDE TO RESULTS
+  try {
+    testState.isTransitioning = false;
+    testState.isSuccessScreen = false;
+    updateQuestionStats(true);
+    if (typeof audioManager !== 'undefined') {
+      audioManager.play('finished');
+    }
+
+    // Celebrations
+    if (maxLogicalStage >= 5 || scores.total >= 95) {
+      setTimeout(() => {
+        if (typeof playClapSound === 'function') playClapSound();
+        if (typeof createConfetti === 'function') createConfetti();
+        if (typeof audioManager !== 'undefined') audioManager.play('celebration');
+      }, 500);
+    }
+
+    // Finalize data
+    const resultData = {
+      file_number: generateFileNumber(),
+      student_name: testState.studentName,
+      age: testState.age,
+      employee_id: testState.employeeId,
+      total_score: scores.total,
+      level: levelData.level,
+      curriculum: levelData.curriculum,
+      test_date: new Date().toLocaleDateString('ar-EG'),
+      month_year: `${new Date().getFullYear()} -${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+      time_taken: Math.floor((Date.now() - testState.startTime) / 1000)
+    };
+
+    saveAndShowResults(resultData, scores);
+  } catch (err) {
+    console.error("Critical error in finishTest:", err);
+    // Emergency fallback: just show results if possible
+    saveAndShowResults(undefined, scores);
+  }
 }
+
+
 
 function getStageCount(stage) {
   // This function is no longer strictly needed as questions.length is used directly
@@ -1866,16 +1228,28 @@ function handleStageSuccess(accuracy) {
   let nextStageName = "";
 
   // Logic to determine what's next based on current start/stage
+  let stageNames = [];
   if (testState.startStage === 1) {
-    nextStage = testState.currentStage + 1;
-    const stageNames = ["", "Oxford Phonics", "Let's Go (Beginner)", "Let's Go (Intermediate)", "Let's Go (Advanced)", "Let's Go (Professional)"];
-    nextStageName = stageNames[nextStage];
+    if (testState.currentStage < 5 && accuracy >= 95) {
+      // High performance in Phonics -> Offer Leap to Let's Go 1
+      nextStage = 201;
+      nextStageName = "Let's Go (Beginner) 1-3 [تحدي القفز!]";
+    } else {
+      nextStage = testState.currentStage + 1;
+      stageNames = ["", "Oxford Phonics 1", "Oxford Phonics 2", "Oxford Phonics 3", "Oxford Phonics 4", "Oxford Phonics 5", "Let's Go Beginner"];
+      nextStageName = stageNames[nextStage] || "Next Phonics Level";
+    }
   } else if (testState.startStage === 201) {
-    nextStage = 5; // Move to LG 6 (Stage 5) after first bulk
-    nextStageName = "Let's Go (Professional)";
+    if (accuracy >= 90) {
+      nextStage = 301; // Leap to Advanced
+      nextStageName = "Let's Go (Advanced) 4-6 [تحدي القفز!]";
+    } else {
+      nextStage = 301; // Normal progression to Intermediate (or repeat/detailed)
+      nextStageName = "Let's Go (Intermediate)";
+    }
   } else if (testState.startStage === 301) {
-    nextStage = 5; // Allow Level 3 to proceed to Professional (Stage 5) to confirm skills
-    nextStageName = "Let's Go (Professional)";
+    nextStage = 5; // Elite
+    nextStageName = "Let's Go (Elite)";
   }
 
   if (!nextStage) { finishTest(true); return; }
@@ -1888,8 +1262,8 @@ function handleStageSuccess(accuracy) {
 
   const container = document.getElementById('questionArea');
   container.innerHTML = `
-        <div class="text-center p-4 md:p-10 animate-fade-in flex flex-col items-center justify-center min-h-[400px]">
-            <!-- Trophy Icon Container -->
+    <div class="text-center p-4 md:p-10 animate-fade-in flex flex-col items-center justify-center min-h-[400px]">
+            <!--Trophy Icon Container-->
             <div class="relative mb-6">
                <div class="text-8xl md:text-9xl transform animate-bounce">
                   ${isPerfect ? '' : '🎉'}
@@ -1902,7 +1276,7 @@ function handleStageSuccess(accuracy) {
 
             <div class="text-3xl mt-4 mb-4">الدقة: <span class="font-bold text-emerald-500">${Math.round(accuracy)}%</span></div>
             
-            <!-- Success Info Card - Balanced Dimensions -->
+            <!--Success Info Card - Balanced Dimensions-->
             <div class="bg-gradient-to-br from-indigo-50 to-blue-50 p-8 md:p-12 rounded-[40px] border-4 border-white shadow-xl max-w-2xl w-full my-6">
                 <p class="text-xl text-indigo-800 mb-3 opacity-80">أنت مؤهل لمرحلة إضافية:</p>
                 <p class="text-4xl md:text-5xl font-black text-indigo-600 mb-6 drop-shadow-sm">${nextStageName}</p>
@@ -1910,28 +1284,39 @@ function handleStageSuccess(accuracy) {
                 <p class="text-lg text-indigo-500/80">سيتم إضافة جولة جديدة من <b>${testState.age <= 7 ? 10 : (testState.age <= 11 ? 12 : 15)} سؤالاً</b> و <b>6 دقائق</b> جديدة</p>
             </div>
             
-            <!-- Primary Action Button with spacing -->
+            <!--Primary Action Button with spacing-->
             <div class="mt-8 mb-4 w-full max-w-md">
                 <button onclick="startNextStage(${nextStage})" class="w-full btn-success px-12 py-6 rounded-3xl font-bold text-3xl shadow-2xl hover:scale-105 active:scale-95 transition-all bg-gradient-to-r from-emerald-500 to-teal-500 text-white border-b-8 border-emerald-700 active:border-b-0 active:translate-y-2">
                     🚀 ابدأ المستوى التالي
                 </button>
             </div>
 
-            <!-- Secondary Actions - Proper spacing to avoid crowded look -->
-            <div class="flex gap-4 mt-4 opacity-70 hover:opacity-100 transition-opacity">
-               <button onclick="finishTest(true)" class="px-6 py-3 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition-all" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);">
-                  🛑 إيقاف وإنهاء
-               </button>
-               <button onclick="finishTest(true)" class="px-6 py-3 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition-all" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);">
-                  ⏭️ تخطي وإنهاء
-               </button>
-            </div>
+            <!--Secondary Actions - Proper spacing to avoid crowded look-->
+    <div class="flex gap-4 mt-4 opacity-70 hover:opacity-100 transition-opacity">
+      <button onclick="finishTest(true)" class="px-6 py-3 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition-all" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);">
+        🛑 إيقاف وإنهاء
+      </button>
+      <button onclick="finishTest(true)" class="px-6 py-3 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition-all" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);">
+        ⏭️ تخطي وإنهاء
+      </button>
+    </div>
         </div>
     `;
 }
 
-function triggerImprovementChance() {
-  // Show confirmation screen instead of adding questions directly
+function triggerImprovementChance(improvementType) {
+  testState.improvementType = improvementType;
+  testState.isFinished = false; // Reset to allow end logic to work later
+
+  // 🎉 ADD CELEBRATION (Clapping & Confetti) when qualifying for a challenge
+  setTimeout(() => {
+    playClapSound();
+    createConfetti();
+    if (typeof audioManager !== 'undefined') {
+      audioManager.play('celebration');
+    }
+  }, 100);
+
   showImprovementOfferScreen();
 }
 
@@ -1939,83 +1324,237 @@ function showImprovementOfferScreen() {
   clearInterval(testState.timerInterval);
   updateQuestionStats(true);
 
-  const extraCount = testState.age >= 10 ? 10 : 5;
-  const extraTime = Math.ceil((extraCount * 45) / 60); // Convert to minutes
+  // Hide test controls during offer
+  document.getElementById('testControls')?.classList.add('hidden');
 
-  const container = document.getElementById('questionArea');
-  container.innerHTML = `
-    <div class="text-center p-6 md:p-10 animate-fade-in flex flex-col items-center justify-center min-h-[400px]">
-        <!-- Icon -->
-        <div class="text-8xl mb-6 animate-bounce">🎯</div>
+  // Lock the current result (Achievement Lock)
+  const currentScores = calculateScores();
+  testState.lockedResult = {
+    scores: currentScores,
+    stage: testState.currentStage,
+    accuracy: (testState.questions.filter((q, i) =>
+      testState.answers[i] && testState.answers[i].toUpperCase().trim() === q.answer.toUpperCase().trim()
+    ).length / testState.questions.length) * 100
+  };
 
-        <h2 class="text-4xl md:text-5xl font-black text-amber-600 mb-3">فرصة تحسين!</h2>
-        <p class="text-xl text-gray-600 mb-6">أنت قريب من مستوى أعلى</p>
-
-        <!-- Info Card -->
-        <div class="bg-gradient-to-br from-amber-50 to-orange-50 p-8 rounded-3xl border-3 border-amber-200 shadow-xl max-w-2xl w-full mb-6">
-            <p class="text-lg text-gray-700 mb-4">💪 نعطيك فرصة إضافية:</p>
-            <div class="text-2xl font-bold text-amber-700 mb-4">
-                ✨ ${extraCount} أسئلة إضافية<br>
-                ⏰ ${extraTime} دقائق إضافية
-            </div>
-            <div class="text-sm text-gray-600 bg-white/60 p-4 rounded-xl">
-                <p class="mb-2">✅ إذا أجبت بشكل جيد → ترتفع درجتك وتصل لمستوى أعلى</p>
-                <p>😊 إذا لم تنجح → تبقى في نتيجتك الحالية (لا تخسر شيئاً!)</p>
-            </div>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="flex flex-col md:flex-row gap-4 w-full max-w-xl">
-            <button onclick="acceptImprovementChance()" 
-                class="flex-1 px-8 py-5 rounded-2xl font-bold text-2xl shadow-xl hover:scale-105 transition-all text-white"
-                style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.5);">
-                🚀 قبول التحسين
-            </button>
-            <button onclick="declineImprovementChance()" 
-                class="flex-1 px-8 py-5 rounded-2xl font-bold text-xl shadow-xl hover:scale-105 transition-all text-white"
-                style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.5);">
-                😊 أنا راضٍ - إنهاء
-            </button>
-        </div>
-    </div>
-  `;
+  offerImprovementChance();
 }
+
+function calculateExtraStats() {
+  const age = testState.age || 7;
+  let count = 8;
+  let secPerQ = 60;
+
+  if (age >= 8 && age <= 10) {
+    count = 12;
+    secPerQ = 45;
+  } else if (age >= 11) {
+    count = 15;
+    secPerQ = 35;
+  }
+
+  return {
+    count: count,
+    time: count * secPerQ,
+    displayTime: Math.ceil((count * secPerQ) / 60)
+  };
+}
+
+function offerImprovementChance() {
+  try {
+    const stats = calculateExtraStats();
+    const extraCount = stats.count;
+    const extraTime = stats.displayTime;
+
+    // Determine the message based on improvement type
+    const improvementType = testState.improvementType || 'improve_lg6';
+    let title = '';
+    let subtitle = '';
+    let targetLevel = '';
+    let icon = '🎯';
+    let currentAchievementMsg = "";
+
+    // 1. Calculate accuracy and level safely
+    let correctTotal = 0;
+    let questionsTotal = 0;
+
+    if (testState.history) {
+      testState.history.forEach(session => {
+        if (session.questions && Array.isArray(session.questions)) {
+          session.questions.forEach((q, i) => {
+            questionsTotal++;
+            if (session.answers && session.answers[i] && q.answer && session.answers[i].toUpperCase().trim() === q.answer.toUpperCase().trim()) {
+              correctTotal++;
+            }
+          });
+        }
+      });
+    }
+
+    // Also count current session (which just finished but isn't in history yet)
+    if (testState.questions && Array.isArray(testState.questions)) {
+      testState.questions.forEach((q, i) => {
+        questionsTotal++;
+        if (testState.answers && testState.answers[i] && q.answer && testState.answers[i].toUpperCase().trim() === q.answer.toUpperCase().trim()) {
+          correctTotal++;
+        }
+      });
+    }
+
+    const scores = calculateScores();
+    const mapStageToLogical = (s) => (s === 201 ? 2 : (s === 301 ? 5 : s));
+    const historyStages = (testState.history || []).map(h => mapStageToLogical(h.stage));
+    const maxStage = Math.max(mapStageToLogical(testState.currentStage), ...historyStages);
+    const levelData = getLevelAndCurriculum(scores, maxStage);
+
+    if (improvementType === 'jump_to_lg13') {
+      title = 'تحدي القفز الذهبي 🌟';
+      subtitle = 'مستوى الطالب متميز! هل تود تخطي المستويات الأولى؟';
+      targetLevel = 'Let\'s Go 4';
+      icon = '🚀';
+      currentAchievementMsg = `انت بطل! أتقنت مستوى الفونكس بنجاح! 👑`;
+    } else if (improvementType === 'jump_to_lg46') {
+      title = 'تحدي العمالقة 🏆';
+      subtitle = 'أداء مذهل! هل تستطيع الوصول لقمة المنهج؟';
+      targetLevel = 'Let\'s Go 6 Elite';
+      icon = '⭐';
+      currentAchievementMsg = `رائع يا بطل! لقد وصلت للمستوى 3 بنجاح! 🏆`;
+    } else if (improvementType === 'improve_lg6') {
+      title = 'قريب جداً! 💪';
+      subtitle = 'فرصة للوصول للتميز التام';
+      targetLevel = 'Let\'s Go 6 Elite';
+      icon = '🎯';
+      currentAchievementMsg = `لقد حققت نتيجة مذهلة في Let's Go 6! 🔥`;
+    }
+
+
+    const container = document.getElementById('questionArea');
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="text-center p-6 md:p-10 animate-fade-in flex flex-col items-center justify-center min-h-[400px]">
+          <div class="text-8xl mb-6 animate-bounce">${icon}</div>
+          <h2 class="text-4xl md:text-5xl font-black text-indigo-600 mb-3">${title}</h2>
+          <p class="text-xl text-gray-600 mb-2">${subtitle}</p>
+  
+          ${currentAchievementMsg ? `<div class="bg-emerald-100 text-emerald-700 px-6 py-2 rounded-full font-bold text-lg mb-6 border-2 border-emerald-200">
+            ${currentAchievementMsg}
+          </div>` : ''}
+  
+          <div class="bg-gradient-to-br from-indigo-50 to-blue-50 p-8 rounded-3xl border-3 border-indigo-200 shadow-xl max-w-2xl w-full mb-6">
+              <p class="text-lg text-gray-700 mb-4">🎓 نعطيك فرصة اختبار مادة متقدمة؛ إذا نجحت فيها ستقفز فوراً إلى: <b class="text-indigo-600">${targetLevel}</b></p>
+              <div class="text-2xl font-bold text-indigo-700 mb-4">
+                  ✨ ${extraCount} أسئلة تحدي ذكية<br>
+                  ⏰ ${extraTime} دقائق إضافية
+              </div>
+              <div class="text-sm text-gray-600 bg-white/60 p-4 rounded-xl">
+                  <p class="mb-2">✅ إذا حصلت على 75%+ → مبروك! قفزت لـ <b>${targetLevel}</b></p>
+                  <p>😊 إذا لم تنجح → تحتفظ بنتيجتك الحالية (لا تخسر شيئاً!)</p>
+              </div>
+          </div>
+  
+          <div class="flex flex-col md:flex-row gap-4 w-full max-w-xl">
+            <button onclick="acceptImprovementChance()"
+              class="flex-1 px-8 py-5 rounded-2xl font-bold text-2xl shadow-xl hover:scale-105 transition-all text-white"
+              style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.5);">
+              🚀 قبول التحدي
+            </button>
+            <button onclick="declineImprovementChance()"
+              class="flex-1 px-8 py-5 rounded-2xl font-bold text-xl shadow-xl hover:scale-105 transition-all text-white"
+              style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.5);">
+              😊 أنا راضٍ - إنهاء
+            </button>
+          </div>
+      </div>
+      `;
+  } catch (err) {
+    console.error("Critical error in offer screen render:", err);
+    // Emergency fallback: just finish everything and show results
+    finishTest(true);
+  }
+}
+
 
 function acceptImprovementChance() {
   testState.isExtraChance = true;
 
-  // Calculate specific questions to add based on age
-  const extraCount = testState.age >= 10 ? 10 : 5;
+  // Show controls again
+  document.getElementById('testControls')?.classList.remove('hidden');
 
-  // Generate additional questions from the same stage/difficulty pool
-  const extraQuestions = generateRandomQuestions(testState.age, testState.currentStage).slice(0, extraCount);
+  // Calculate dynamic stats
+  const stats = calculateExtraStats();
+  const extraCount = stats.count;
+
+  if (extraCount <= 0) {
+    showToast('⚠️ لا يوجد أسئلة إضافية متاحة حالياً');
+    finishTest(true);
+    return;
+  }
+
+  // Determine target stage based on improvement type
+  const improvementType = testState.improvementType || 'improve_lg6';
+  let targetStage = testState.currentStage;
+
+  if (improvementType === 'jump_to_lg13') {
+    targetStage = 201; // Let's Go 1-3
+  } else if (improvementType === 'jump_to_lg46') {
+    targetStage = 301; // Let's Go 4-6
+  } else if (improvementType === 'improve_lg6') {
+    targetStage = 301; // Same level but harder questions
+  }
+
+  // Generate questions from target stage
+  let extraQuestions = generateRandomQuestions(testState.age, targetStage);
+
+  // CRITICAL: Remove any questions that were already asked
+  const usedQuestions = testState.questions.map(q => q.q);
+  extraQuestions = extraQuestions.filter(q => !usedQuestions.includes(q.q));
+
+  // Take only the needed count
+  extraQuestions = extraQuestions.slice(0, extraCount);
 
   // Tag them to identify they are improvement questions
-  extraQuestions.forEach(q => q.isImprovement = true);
+  extraQuestions.forEach(q => {
+    q.isImprovement = true;
+    q.improvementType = improvementType;
+  });
 
   // Append to current test state
   testState.questions = [...testState.questions, ...extraQuestions];
-  testState.answers = [...testState.answers, ...new Array(extraCount).fill(null)];
+  testState.answers = [...testState.answers, ...new Array(extraQuestions.length).fill(null)];
 
-  // Add extra time (approx 45s per question)
-  const extraTime = extraCount * 45;
-  testState.timeLimit += extraTime;
+  // Update time limit based on calculation
+  testState.timeLimit += stats.time;
 
-  // Reset timer
+  // Reset timer for the extra questions session
   testState.startTime = Date.now();
+  testState.isFinished = false; // Allow test to continue
+  testState.isTransitioning = false;
   startTimer();
 
   // Show toast notification
-  showToast(`🎯 تم إضافة ${extraCount} أسئلة! حظاً موفقاً 🍀`);
+  const levelNames = {
+    'jump_to_lg13': 'Let\'s Go 1-3',
+    'jump_to_lg46': 'Let\'s Go 4-6',
+    'improve_lg6': 'Let\'s Go 6'
+  };
+  showToast(`🎯 تم إضافة ${extraQuestions.length} سؤال من ${levelNames[improvementType]}! حظاً موفقاً 🍀`);
 
   // Update UI stats
   updateQuestionStats();
 
-  // Continue to next question
-  showQuestion(testState.currentIndex + 1);
+  // Continue to next question if we actually added something
+  if (extraQuestions.length > 0) {
+    showQuestion(testState.currentIndex + 1);
+  } else {
+    showToast('⚠️ تم استخدام جميع الأسئلة المتاحة لهذا المستوى');
+    finishTest(true);
+  }
 }
 
 function declineImprovementChance() {
+  // Show controls again
+  document.getElementById('testControls')?.classList.remove('hidden');
   // User is satisfied with current score - finish immediately
   showToast('✅ تم إنهاء الاختبار');
   finishTest(true);
@@ -2047,61 +1586,36 @@ function startNextStage(specificStage) {
   showQuestion(0);
 }
 
-// Get the threshold for the next level
-function getNextLevelThreshold(currentScore) {
-  // Balanced thresholds following the document
-  const thresholds = [26, 41, 51, 61, 69, 77, 84, 90, 95];
-  for (let threshold of thresholds) {
-    if (currentScore < threshold) {
-      return threshold;
-    }
-  }
-  return null; // Already at peak level (Let's Go 6)
-}
+// Old challenge systems removed to prevent interference
 
-// Offer challenge questions
-function offerChallenge(resultData, scores, nextThreshold) {
-  const pointsNeeded = nextThreshold - scores.total;
-  const nextLevel = getLevelAndCurriculum(nextThreshold);
-
-  document.getElementById('testScreen').classList.remove('hidden');
-  document.getElementById('questionArea').innerHTML = `
-    <div class="text-center space-y-6 p-8">
-      <div class="text-6xl mb-4">🎯</div>
-      <h2 class="text-3xl font-bold" style="color: #667eea;">أنت قريب جداً!</h2>
-      <p class="text-xl" style="color: var(--text-primary);">
-        درجتك الحالية: <span class="font-bold text-2xl">${scores.total}/100</span>
-      </p>
-      <p class="text-lg" style="color: var(--text-secondary);">
-        تحتاج فقط <span class="font-bold text-xl" style="color: #f5576c;">${pointsNeeded} نقطة</span> 
-        للوصول إلى:<br>
-        <span class="font-bold text-2xl" style="color: #38ef7d;">${nextLevel.level} - ${nextLevel.curriculum}</span>
-      </p>
-      
-      <div class="bg-blue-50 p-6 rounded-2xl border-2 border-blue-200" style="background: rgba(102, 126, 234, 0.1);">
-        <p class="text-lg font-semibold mb-2">💪 تحدي إضافي</p>
-        <p>نعطيك <b>10 أسئلة</b> أصعب قليلاً + <b>5 دقائق</b> إضافية</p>
-        <p class="text-sm mt-2" style="color: var(--text-secondary);">
-          إذا أجبت بشكل جيد → ترتفع لمستوى أعلى ✅<br>
-          إذا لم تنجح → تبقى في مستواك الحالي (لا تخسر شيء!)
-        </p>
-      </div>
-
-      <div class="flex gap-4 justify-center mt-8">
-        <button onclick="acceptChallenge()" class="btn-success px-8 py-4 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition">
-          🚀 قبول التحدي!
-        </button>
-        <button onclick="declineChallenge()" class="btn-skip px-8 py-4 rounded-2xl font-bold text-xl shadow-lg hover:scale-105 transition">
-          😊 أنا راضٍ - إنهاء
-        </button>
-      </div>
-    </div>
-  `;
-}
 
 // Challenge functions removed from script.js to avoid duplication with challenge-mode.js
-// Logic is handled in scripts/challenge-mode.js
+// Challenge functions
+// We expose this globally here to ensure the "I am satisfied" button works even if challenge-mode.js has scope issues
+function declineChallenge() {
+  testState.challengeDeclined = true;
+  document.getElementById('testControls')?.classList.remove('hidden');
+  showToast('✅ تم إنهاء الاختبار');
 
+  // Force show results directly
+  if (testState.initialResult) {
+    saveAndShowResults(testState.initialResult, testState.initialScores);
+  } else {
+    // If for some reason initialResult is missing, recalculate everything
+    const finalScores = calculateScores();
+    const resultData = {
+      student_name: testState.studentName,
+      age: testState.age,
+      employee_id: testState.employeeId,
+      total_score: finalScores.total,
+      level: getLevelAndCurriculum(finalScores.total, testState.maxStageReached).level,
+      curriculum: getLevelAndCurriculum(finalScores.total, testState.maxStageReached).curriculum,
+      test_date: new Date().toLocaleDateString('ar-EG'),
+      file_number: generateFileNumber()
+    };
+    saveAndShowResults(resultData, finalScores);
+  }
+}
 
 // Button to finish test early
 function manualFinishTest() {
@@ -2114,63 +1628,85 @@ function manualFinishTest() {
 function saveAndShowResults(resultData, scores) {
   // Use passed scores or calculate now
   const finalScores = scores || calculateScores();
+  const maxStage = testState.maxLogicalStage || 1;
 
-  // If this is a final results call (not offering challenge), save it.
-  // Otherwise, store for later.
-  const nextThreshold = getNextLevelThreshold(finalScores.total);
-  const shouldOfferChallenge = nextThreshold &&
-    finalScores.total >= (nextThreshold - 5) &&
-    !testState.isChallenge &&
-    !testState.challengeAttempted;
-
-  if (shouldOfferChallenge) {
-    testState.initialResult = resultData;
-    testState.initialScores = finalScores;
-    offerChallenge(resultData, finalScores, nextThreshold);
+  // Admin Skip Save Logic
+  if (testState.skipSave) {
+    showToast('🛡️ تم إنهاء وضع التجربة بنجاح (لم يتم حفظ السجل)');
+    showResults(resultData, finalScores);
     return;
   }
 
-  allRecords.push(resultData);
+  // Ensure resultData exists (if called from failure of challenge)
+  const finalResult = resultData || {
+    file_number: generateFileNumber(),
+    student_name: testState.studentName,
+    age: testState.age,
+    employee_id: testState.employeeId,
+    total_score: finalScores.total,
+    level: getLevelAndCurriculum(finalScores, maxStage).level,
+    curriculum: getLevelAndCurriculum(finalScores, maxStage).curriculum,
+    test_date: new Date().toLocaleDateString('ar-EG'),
+    month_year: `${new Date().getFullYear()} -${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+    time_taken: Math.floor((Date.now() - testState.startTime) / 1000)
+  };
+
+  allRecords.push(finalResult);
   localStorage.setItem('englishTest_records', JSON.stringify(allRecords));
 
   if (typeof firebaseManager !== 'undefined') {
     firebaseManager.saveRecords(allRecords);
   }
 
-  showResults(resultData, finalScores);
+  showResults(finalResult, finalScores);
 }
+
+
 
 function calculateScores() {
   let sectionScores = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
   let correctCount = 0;
   let totalCount = 0;
 
-  // 1. Process Finished Stages from History
-  testState.history.forEach(session => {
-    session.questions.forEach((q, i) => {
+  // 1. Process History (Archived Stages)
+  if (testState.history && Array.isArray(testState.history)) {
+    testState.history.forEach(session => {
+      if (session.questions && Array.isArray(session.questions)) {
+        session.questions.forEach((q, i) => {
+          totalCount++;
+          const ans = session.answers ? session.answers[i] : null;
+          if (ans && q.answer && ans.toUpperCase().trim() === q.answer.toUpperCase().trim()) {
+            correctCount++;
+            if (sectionScores[q.section] !== undefined) sectionScores[q.section]++;
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Process Current questions
+  if (testState.questions && testState.questions.length > 0) {
+    testState.questions.forEach((q, i) => {
       totalCount++;
-      const ans = session.answers[i];
-      if (ans && ans.toUpperCase().trim() === q.answer.toUpperCase().trim()) {
+      const ans = testState.answers[i];
+      if (ans && q.answer && ans.toUpperCase().trim() === q.answer.toUpperCase().trim()) {
         correctCount++;
         if (sectionScores[q.section] !== undefined) sectionScores[q.section]++;
       }
     });
-  });
+  }
 
-  // 2. Process Current Running Stage
-  testState.questions.forEach((q, i) => {
-    totalCount++;
-    const answer = testState.answers[i];
-    if (!answer) return;
-    const isCorrect = answer.toUpperCase().trim() === q.answer.toUpperCase().trim();
-    if (isCorrect) {
-      correctCount++;
-      if (sectionScores[q.section] !== undefined) sectionScores[q.section]++;
-    }
-  });
+  // Calculate global score
+  let totalScore = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
 
-  // Normalize to 100 points
-  const totalScore = totalCount > 0 ? Math.min(100, Math.round((correctCount / totalCount) * 100)) : 0;
+
+  // Debug logging
+  console.log('📊 Score Calculation:', {
+    totalQuestions: totalCount,
+    correctAnswers: correctCount,
+    totalScore: totalScore,
+    sectionScores: sectionScores
+  });
 
   return {
     sectionA: sectionScores.A,
@@ -2185,174 +1721,188 @@ function calculateScores() {
 
 // IMPROVED LEVEL DETERMINATION SYSTEM
 // More balanced thresholds based on weighted scoring
-function getLevelAndCurriculum(score, maxStageReached = 1) {
+function getLevelAndCurriculum(scoresObj, maxStageReached = 1) {
+  const score = scoresObj.total;
+  let result = { level: 'Phonics 1', curriculum: 'Oxford Phonics 1' };
+
   // 1. Level 1 Range: Phonics (Stages 1-1.x)
   if (maxStageReached === 1) {
-    if (score <= 20) return { level: 'Prep Level', curriculum: 'Phonics Foundation' };
-    if (score <= 40) return { level: 'Phonics 1', curriculum: 'Oxford Phonics 1' };
-    if (score <= 60) return { level: 'Phonics 2', curriculum: 'Oxford Phonics 2' };
-    if (score <= 80) return { level: 'Phonics 3', curriculum: 'Oxford Phonics 3' };
-    if (score <= 90) return { level: 'Phonics 4', curriculum: 'Oxford Phonics 4' };
-    return { level: 'Phonics 5', curriculum: 'Oxford Phonics 5' };
+    if (score <= 20) result = { level: 'Prep Level', curriculum: 'Phonics Foundation' };
+    else if (score <= 40) result = { level: 'Phonics 1', curriculum: 'Oxford Phonics 1' };
+    else if (score <= 60) result = { level: 'Phonics 2', curriculum: 'Oxford Phonics 2' };
+    else if (score <= 80) result = { level: 'Phonics 3', curriculum: 'Oxford Phonics 3' };
+    else if (score <= 90) result = { level: 'Phonics 4', curriculum: 'Oxford Phonics 4' };
+    else result = { level: 'Phonics 5', curriculum: 'Oxford Phonics 5' };
   }
-
   // 2. Level 2 Range: Let's Go 1-3 (Stages 2-3)
-  if (maxStageReached >= 2 && maxStageReached <= 4) {
-    if (score <= 30) return { level: 'Phonics 5', curriculum: 'Oxford Phonics 5' }; // Drop down if very low
-    if (score <= 60) return { level: "Let's Go 1", curriculum: "Let's Go 1" };
-    if (score <= 85) return { level: "Let's Go 2", curriculum: "Let's Go 2" };
-    return { level: "Let's Go 3", curriculum: "Let's Go 3" };
+  else if (maxStageReached >= 2 && maxStageReached <= 4) {
+    if (score <= 30) result = { level: 'Phonics 5', curriculum: 'Oxford Phonics 5' }; // Drop down if very low
+    else if (score <= 60) result = { level: "Let's Go 1", curriculum: "Let's Go 1" };
+    else if (score <= 85) result = { level: "Let's Go 2", curriculum: "Let's Go 2" };
+    else result = { level: "Let's Go 3", curriculum: "Let's Go 3" };
   }
-
   // 3. Level 3 Range: Let's Go 4-6 (Stage 5)
-  if (maxStageReached >= 5) {
-    if (score <= 40) return { level: "Let's Go 3", curriculum: "Let's Go 3" }; // Drop down
-    if (score <= 75) return { level: "Let's Go 4", curriculum: "Let's Go 4" };
-    if (score <= 90) return { level: "Let's Go 5", curriculum: "Let's Go 5" };
-    return { level: "Let's Go 6", curriculum: "Let's Go 6" };
+  else if (maxStageReached >= 5) {
+    // 🛡️ GOLDEN RULE: Never drop below Let's Go 4 if reached Stage 5
+    if (score <= 75) result = { level: "Let's Go 4", curriculum: "Let's Go 4" };
+    else if (score <= 90) result = { level: "Let's Go 5", curriculum: "Let's Go 5" };
+    else result = { level: "Let's Go 6", curriculum: "Let's Go 6" };
   }
-
-  return { level: 'Phonics 1', curriculum: 'Oxford Phonics 1' }; // Fallback
+  return result;
 }
+
 
 function generateFileNumber() {
   const emp = employees[testState.employeeId];
   emp.counter++;
-  return `${testState.employeeId}-${emp.counter}`;
+  return `${testState.employeeId} -${emp.counter} `;
 }
 
 function showResults(data, scores) {
-  document.getElementById('testScreen').classList.add('hidden');
-  document.getElementById('resultsScreen').classList.remove('hidden');
+  try {
+    document.getElementById('testScreen').classList.add('hidden');
+    document.getElementById('resultsScreen').classList.remove('hidden');
 
-  document.getElementById('resultStudentName').textContent = data.student_name;
-  document.getElementById('levelResult').textContent = data.level;
-  document.getElementById('curriculumResult').textContent = data.curriculum;
-  document.getElementById('fileNumber').textContent = data.file_number;
+    document.getElementById('resultStudentName').textContent = data.student_name || 'طالب';
+    document.getElementById('levelResult').textContent = data.level || '-';
+    document.getElementById('curriculumResult').textContent = data.curriculum || '-';
+    document.getElementById('fileNumber').textContent = data.file_number || '-';
 
-  // Calculate denominators dynamically (History + Current)
-  const denominators = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
 
-  // 1. From History
-  testState.history.forEach(session => {
-    session.questions.forEach(q => {
-      if (denominators[q.section] !== undefined) denominators[q.section]++;
+    // Calculate denominators dynamically from HISTORY + CURRENT
+    const denominators = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+
+    // From History
+    if (testState.history) {
+      testState.history.forEach(session => {
+        if (session.questions) {
+          session.questions.forEach(q => {
+            if (denominators[q.section] !== undefined) denominators[q.section]++;
+          });
+        }
+      });
+    }
+
+    // From Current
+    if (testState.questions) {
+      testState.questions.forEach(q => {
+        if (denominators[q.section] !== undefined) denominators[q.section]++;
+      });
+    }
+
+
+
+    // Debug logging
+    console.log('📈 Results Display:', {
+      scores: scores,
+      denominators: denominators
     });
-  });
 
-  // 2. From Current Batch
-  testState.questions.forEach(q => {
-    if (denominators[q.section] !== undefined) denominators[q.section]++;
-  });
+    const updateStat = (id, score, den) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const pct = den > 0 ? Math.round((score / den) * 100) : 0;
+      el.innerHTML = den > 0 ?
+        `<span class="text-indigo-600">${score}</span> <small class="text-gray-400">/${den}</small> <div class="text-[10px] text-green-600 font-bold">${pct}%</div>` :
+        `<span class="text-gray-300">0</span> <small class="text-gray-300">/0</small>`;
+    };
 
-  const updateStat = (id, score, den) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.innerHTML = den > 0 ? `<span class="text-indigo-600">${score}</span><small class="text-gray-400">/${den}</small>` : `<span class="text-gray-300">0</span><small class="text-gray-300">/0</small>`;
-  };
+    updateStat('sectionAScore', scores.sectionA, denominators.A);
+    updateStat('sectionBScore', scores.sectionB, denominators.B);
+    updateStat('sectionCScore', scores.sectionC, denominators.C);
+    updateStat('sectionDScore', scores.sectionD, denominators.D);
+    updateStat('sectionEScore', scores.sectionE, denominators.E);
+    updateStat('sectionFScore', scores.sectionF, denominators.F);
 
-  updateStat('sectionAScore', scores.sectionA, denominators.A);
-  updateStat('sectionBScore', scores.sectionB, denominators.B);
-  updateStat('sectionCScore', scores.sectionC, denominators.C);
-  updateStat('sectionDScore', scores.sectionD, denominators.D);
-  updateStat('sectionEScore', scores.sectionE, denominators.E);
-  updateStat('sectionFScore', scores.sectionF, denominators.F);
+    const scoreCircle = document.getElementById('scoreCircle');
+    const scoreValue = document.getElementById('scoreValue');
+    const circumference = 2 * Math.PI * 42;
+    const offset = circumference - (data.total_score / 100) * circumference;
 
-  const scoreCircle = document.getElementById('scoreCircle');
-  const scoreValue = document.getElementById('scoreValue');
-  const circumference = 2 * Math.PI * 42;
-  const offset = circumference - (data.total_score / 100) * circumference;
+    setTimeout(() => {
+      scoreCircle.style.strokeDashoffset = offset;
 
-  setTimeout(() => {
-    scoreCircle.style.strokeDashoffset = offset;
+      let current = 0;
+      const increment = data.total_score / 50;
+      const timer = setInterval(() => {
+        current += increment;
+        if (current >= data.total_score) {
+          current = data.total_score;
+          clearInterval(timer);
+        }
+        scoreValue.textContent = Math.round(current);
+      }, 20);
+    }, 100);
 
-    let current = 0;
-    const increment = data.total_score / 50;
-    const timer = setInterval(() => {
-      current += increment;
-      if (current >= data.total_score) {
-        current = data.total_score;
-        clearInterval(timer);
+    if (data.total_score >= 70) {
+      if (typeof createResultsFireworks === 'function') {
+        createResultsFireworks();
+      } else if (typeof createConfetti === 'function') {
+        createConfetti(); // Fallback
       }
-      scoreValue.textContent = Math.round(current);
-    }, 20);
-  }, 100);
+    }
 
-  if (data.total_score >= 70) {
-    createResultsFireworks();
-  }
-
-  // If Instant Feedback was OFF, show the detailed Answer Table
-  if (!testState.showInstantFeedback) {
-    renderAnswersTable();
+    // If Instant Feedback was OFF, show the detailed Answer Table
+    if (!testState.showInstantFeedback) {
+      renderAnswersTable();
+    }
+  } catch (err) {
+    console.error("Error in showResults UI update:", err);
   }
 }
 
+
+// 📋 Answer Table implementation
 function renderAnswersTable() {
-  const container = document.getElementById('resultsScreen').querySelector('.card-gradient');
-  const tableDiv = document.createElement('div');
-  tableDiv.className = 'mt-8 w-full animate-fade-in no-print';
+  const container = document.getElementById('resultsScreen');
+  if (!container) return;
 
-  let html = `
-        <h3 class="text-xl font-bold mb-4 text-center">📝 مراجعة الإجابات</h3>
-        <div class="overflow-x-auto rounded-xl border-2 border-gray-200">
-            <table class="w-full text-sm text-center">
-                <thead class="bg-gray-50">
-                    <tr>
-                        <th class="p-3 border-b">السؤال</th>
-                        <th class="p-3 border-b">إجابتك</th>
-                        <th class="p-3 border-b">الإجابة الصحيحة</th>
-                        <th class="p-3 border-b">النتيجة</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 bg-white">
-    `;
-
-  // Retrieve ALL questions (including history if multi-stage)
-  // Flatten logic: If history exists, iterate it. Then current questions.
-  let allQ = [];
-  let allA = [];
-
-  testState.history.forEach(h => {
-    h.questions.forEach((q, i) => {
-      allQ.push(q);
-      allA.push(h.answers[i]);
-    });
-  });
-
-  // Current session
-  testState.questions.forEach((q, i) => {
-    allQ.push(q);
-    allA.push(testState.answers[i]);
-  });
-
-  allQ.forEach((q, i) => {
-    const myAns = allA[i] ? allA[i] : (allA[i] === null ? '(متروك)' : '');
-    const correctAns = q.answer;
-    const isCorrect = myAns && myAns.toUpperCase().trim() === correctAns.toUpperCase().trim();
-
-    html += `
-            <tr class="${isCorrect ? 'bg-green-50' : 'bg-red-50'} hover:bg-gray-50 transition">
-                <td class="p-3 font-semibold" dir="auto">${q.q.replace(/___/g, '...')}</td>
-                <td class="p-3 ${isCorrect ? 'text-green-700 font-bold' : 'text-red-600 line-through'}">${myAns}</td>
-                <td class="p-3 text-green-700 font-bold" dir="ltr">${correctAns}</td>
-                <td class="p-3 text-xl">${isCorrect ? '✅' : '❌'}</td>
+  // Create table section
+  let tableHtml = `
+    <div class="mt-10 p-4 rounded-2xl bg-white shadow-xl overflow-hidden border-2 border-indigo-100">
+      <h3 class="text-xl font-bold text-indigo-700 mb-4 text-center">📊 تحليل الإجابات (للمعلم)</h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-right">
+          <thead class="bg-indigo-50 text-indigo-700">
+            <tr>
+              <th class="p-3">السؤال</th>
+              <th class="p-3">إجابة الطالب</th>
+              <th class="p-3">الإجابة الصحيحة</th>
+              <th class="p-3 text-center">الحالة</th>
             </tr>
-        `;
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+  `;
+
+  testState.questions.forEach((q, i) => {
+    const userAnswer = testState.answers[i] || 'لم يتم الحل';
+    const isCorrect = userAnswer.toUpperCase().trim() === q.answer.toUpperCase().trim();
+
+    tableHtml += `
+      <tr class="${isCorrect ? 'bg-emerald-50/30' : 'bg-red-50/30'}">
+        <td class="p-3 font-medium">${q.q}</td>
+        <td class="p-3 ${isCorrect ? 'text-emerald-700' : 'text-red-600 font-bold'}">${userAnswer}</td>
+        <td class="p-3 text-gray-600 font-bold">${q.answer}</td>
+        <td class="p-3 text-center text-xl">${isCorrect ? '✅' : '❌'}</td>
+      </tr>
+    `;
   });
 
-  html += `
-                </tbody>
-            </table>
-        </div>
-    `;
+  tableHtml += `
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
 
-  tableDiv.innerHTML = html;
-
-  // Append before the buttons at the bottom
-  const buttonsDiv = container.querySelector('.flex.flex-wrap.justify-center.gap-4');
-  container.insertBefore(tableDiv, buttonsDiv);
+  // Append to results screen
+  const wrapper = document.createElement('div');
+  wrapper.className = 'max-w-4xl mx-auto w-full px-4 mb-20';
+  wrapper.innerHTML = tableHtml;
+  container.appendChild(wrapper);
 }
+
+
 
 function createResultsFireworks() {
   const container = document.getElementById('confettiContainer');
@@ -2389,21 +1939,7 @@ function createResultsFireworks() {
   }
 }
 
-function backToDashboard() {
-  document.getElementById('resultsScreen').classList.add('hidden');
-  document.getElementById('timer').classList.remove('timer-warning');
-
-  document.getElementById('studentName').value = '';
-  document.getElementById('studentAge').value = '';
-  document.getElementById('adminStudentName').value = '';
-  document.getElementById('adminStudentAge').value = '';
-
-  if (isAdmin || isSupervisor) {
-    showAdminDashboard();
-  } else {
-    showEmployeeDashboard();
-  }
-}
+// backToDashboard moved to app-logic.js
 
 // ==================== UTILITY FUNCTIONS ====================
 function showToast(message) {
@@ -2586,6 +2122,10 @@ function populateEmployeeSelects() {
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
   populateEmployeeSelects();
+  // Start the premium welcome sequence
+  if (typeof showWelcomeScreen === 'function') {
+    showWelcomeScreen();
+  }
 });
 
 // Hook into existing global functions if needed, or simply let the DOMContentLoaded handle initial load.
@@ -2597,12 +2137,15 @@ function updateQuestionStats(isFinal = false) {
   const total = testState.questions.length;
   // If final, everything is answered and nothing is left
   const questionsAnswered = isFinal ? total : testState.answers.filter(a => a !== null).length;
+
+  // Logic: Total - Index (Current Question counts as remaining to be done)
+  // If isFinal is true, force 0.
   const questionsLeft = isFinal ? 0 : (total - testState.currentIndex);
 
   document.getElementById('totalQuestionsCount').textContent = total;
 
   const remnantEl = document.getElementById('remainingQuestions');
-  remnantEl.textContent = questionsLeft;
+  if (remnantEl) remnantEl.textContent = questionsLeft;
 
   // Update answered count
   document.getElementById('answeredQuestions').textContent = questionsAnswered;
@@ -2616,6 +2159,63 @@ function updateQuestionStats(isFinal = false) {
       sectionTotals[q.section]++;
     }
   });
+
+  // Calculate Mistakes (Only count questions that were ATTEMPTED/ANSWERED)
+  let mistakes = 0;
+  let actuallyAnswered = 0;
+
+  testState.questions.forEach((q, i) => {
+    const answer = testState.answers[i];
+    if (answer !== null && answer !== undefined) {
+      actuallyAnswered++;
+      const isCorrect = answer.toUpperCase().trim() === q.answer.toUpperCase().trim();
+      if (!isCorrect) mistakes++;
+    }
+  });
+
+  // Include history mistakes (Safely)
+  if (testState.history) {
+    testState.history.forEach(session => {
+      if (session.questions && Array.isArray(session.questions)) {
+        session.questions.forEach((q, i) => {
+          const ans = session.answers ? session.answers[i] : null;
+          if (ans !== null && ans !== undefined) {
+            actuallyAnswered++;
+            if (q.answer) {
+              const isCorrect = ans.toUpperCase().trim() === q.answer.toUpperCase().trim();
+              if (!isCorrect) mistakes++;
+            }
+          }
+        });
+      }
+    });
+  }
+
+
+  // Calculate and Update Live Accuracy Badge
+  let liveAccuracy = 100;
+  if (actuallyAnswered > 0) {
+    liveAccuracy = Math.round(((actuallyAnswered - mistakes) / actuallyAnswered) * 100);
+  }
+
+  const accuracyValueEl = document.getElementById('liveAccuracyValue');
+  const accuracyBadgeEl = document.getElementById('liveAccuracyBadge');
+  if (accuracyValueEl) accuracyValueEl.textContent = `${liveAccuracy}%`;
+
+  if (accuracyBadgeEl) {
+    if (liveAccuracy < 70) {
+      accuracyBadgeEl.classList.replace('text-green-500', 'text-amber-500');
+      accuracyBadgeEl.classList.replace('bg-green-500/10', 'bg-amber-500/10');
+      accuracyBadgeEl.classList.replace('border-green-500/20', 'border-amber-500/20');
+      accuracyBadgeEl.querySelector('.w-1.5').classList.replace('bg-green-500', 'bg-amber-500');
+    } else {
+      accuracyBadgeEl.classList.add('text-green-500'); // Ensure green by default
+      accuracyBadgeEl.classList.add('bg-green-500/10');
+    }
+  }
+
+  const wrongEl = document.getElementById('wrongQuestions');
+  if (wrongEl) wrongEl.textContent = mistakes;
 
   // Count where we are currently
   // We can just highlight the sections based on current question

@@ -189,7 +189,7 @@ const questionBank = {
     { q: 'اكتب الكلمة:', display: '🥚', answer: 'EGG', type: 'typing' },
     { q: 'رتب الكلمات: (name / is / My / Ahmed)', display: '🧒', isScrambled: true, options: ['My name is Ahmed', 'Ahmed is name My', 'Name My is Ahmed', 'is name My Ahmed'], answer: 'My name is Ahmed', type: 'choice' },
     { q: 'اكتب عكس كلمة "Good":', display: '', oppositeWord: 'Good', answer: 'BAD', type: 'typing', isOpposite: true },
-    { q: 'اكتب الكلمة:', display: '🧢', answer: 'HAT', type: 'typing' },
+    { q: 'اكتب الكلمة:', display: '🧢', answer: 'CAP', type: 'typing' },
     { q: 'اكتب الكلمة:', display: '🛏️', answer: 'BED', type: 'typing' },
     { q: 'اكتب الرقم:', display: '1️⃣', answer: 'ONE', type: 'typing' },
     { q: 'اكتب عكس كلمة "Boy":', display: '', oppositeWord: 'Boy', answer: 'GIRL', type: 'typing', isOpposite: true },
@@ -502,7 +502,7 @@ const questionBank = {
     { q: 'I ______ go to the park.', display: '', options: ['sometimes', 'twice'], answer: 'sometimes', type: 'choice' },
     { q: 'He plays the guitar ______.', display: '', options: ['well', 'good'], answer: 'well', type: 'choice' },
     { q: 'She speaks ______.', display: '', options: ['quietly', 'quiet'], answer: 'quietly', type: 'choice' },
-    { q: 'Whose ______ are these?', display: '', options: ['shoes', 'shoe'], answer: 'shoes', type: 'choice' },
+    { q: 'Whose ______ are these?', display: '', options: ['yours', 'your'], answer: 'yours', type: 'choice' },
     { q: 'They are ______.', display: '', options: ['hers', 'her'], answer: 'hers', type: 'choice' },
     { q: 'There is ______ cheese.', display: '', options: ['some', 'many'], answer: 'some', type: 'choice' },
     { q: 'Are there ______ grapes?', display: '', options: ['any', 'a'], answer: 'any', type: 'choice' },
@@ -591,7 +591,7 @@ const questionBank = {
     { q: 'He talks ______.', display: '', options: ['loudly', 'loud'], answer: 'loudly', type: 'choice' },
     { q: 'They study ______.', display: '', options: ['hard', 'hardly'], answer: 'hard', type: 'choice' },
     { q: 'Whose ______ are these?', display: '', options: ['pencils', 'pencil'], answer: 'pencils', type: 'choice' },
-    { q: 'They are ______.', display: '', options: ['yours", "your'], answer: 'yours', type: 'choice' },
+    { q: 'They are ______.', display: '', options: ['yours', 'your'], answer: 'yours', type: 'choice' },
     { q: 'Is there ______ juice?', display: '', options: ['any', 'many'], answer: 'any', type: 'choice' },
     { q: 'Yes, there is ______.', display: '', options: ['some', 'any'], answer: 'some', type: 'choice' }
   ]

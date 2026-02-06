@@ -3,46 +3,79 @@
 // وظائف نظام التحدي الإضافي
 // ========================================
 
+// Essential utility: Local shuffle array to ensure independence
+function localShuffle(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 // Accept challenge - generate harder questions (Moved from script.js)
 function acceptChallenge() {
     showToast('🎯 ممتاز! استعد للتحدي!');
 
-    // Generate 10 hard questions (Prioritize difficulty 3 for true challenge)
+    // Generate questions based on age for balanced challenge
+    const age = testState.age || 10;
+    const currentMaxStage = testState.currentStage || 1;
+    let totalChallengeQ = 10;
+    if (age >= 8 && age <= 11) totalChallengeQ = 12;
+    if (age >= 12) totalChallengeQ = 15;
+
+    const countD = Math.ceil(totalChallengeQ * 0.6); // 60% Reading
+    const countF = totalChallengeQ - countD;         // 40% Grammar/Vocab
+
     const hardQuestions = [];
 
-    // Filter for Difficulty 3 (Very Hard) first, then fallback to 2 (Medium)
-    let sectionD_Hard = [...questionBank.sectionD].filter(q => q.difficulty === 3);
-    if (sectionD_Hard.length < 6) {
-        // Fallback if not enough hard questions
-        const sectionD_Medium = [...questionBank.sectionD].filter(q => q.difficulty === 2);
-        sectionD_Hard = [...sectionD_Hard, ...sectionD_Medium];
+    // SMART FILTERING: High Level = Elite Questions Only
+    let targetDiffs = [3]; // Default for low levels
+    if (currentMaxStage >= 301 || currentMaxStage >= 5) {
+        targetDiffs = [6, 5]; // Elite & Advanced ONLY
+    } else if (currentMaxStage >= 201 || currentMaxStage >= 3) {
+        targetDiffs = [5, 4, 3];
     }
 
-    let sectionF_Hard = [...questionBank.sectionF].filter(q => q.difficulty === 3);
-    if (sectionF_Hard.length < 4) {
-        const sectionF_Medium = [...questionBank.sectionF].filter(q => q.difficulty === 2);
-        sectionF_Hard = [...sectionF_Hard, ...sectionF_Medium];
+    // Filter for Section D (Reading)
+    let sectionD_Pool = [...questionBank.sectionD].filter(q => targetDiffs.includes(q.difficulty));
+    if (sectionD_Pool.length < countD) {
+        // Fallback to broader difficulty if pool is too small
+        sectionD_Pool = [...questionBank.sectionD].filter(q => q.difficulty >= 2);
     }
 
-    // Select 6 Reading (D) and 4 Grammar/Vocab (F)
-    hardQuestions.push(...shuffleArray(sectionD_Hard).slice(0, 6).map(q => ({ ...q, section: 'D', sectionName: 'القراءة', points: 3 }))); // Higher points for challenge!
-    hardQuestions.push(...shuffleArray(sectionF_Hard).slice(0, 4).map(q => ({ ...q, section: 'F', sectionName: 'المفردات والقواعد', points: 3 })));
+    // Filter for Section F (Grammar)
+    let sectionF_Pool = [...questionBank.sectionF].filter(q => targetDiffs.includes(q.difficulty));
+    if (sectionF_Pool.length < countF) {
+        sectionF_Pool = [...questionBank.sectionF].filter(q => q.difficulty >= 2);
+    }
+
+    // Select based on calculated counts
+    hardQuestions.push(...localShuffle(sectionD_Pool).slice(0, countD).map(q => ({ ...q, section: 'D', sectionName: 'القراءة (Elite)', points: 3 })));
+    hardQuestions.push(...localShuffle(sectionF_Pool).slice(0, countF).map(q => ({ ...q, section: 'F', sectionName: 'المفردات والقواعد (Elite)', points: 3 })));
 
     // Store challenge state
     testState.isChallenge = true;
-    testState.challengeQuestions = shuffleArray(hardQuestions);
-    testState.challengeAnswers = new Array(10).fill(null);
+    testState.challengeQuestions = localShuffle(hardQuestions);
+    testState.challengeAnswers = new Array(hardQuestions.length).fill(null);
     testState.challengeIndex = 0;
     testState.challengeStartTime = Date.now();
-    testState.challengeTimeLimit = 300; // 5 minutes
+    testState.challengeTimeLimit = totalChallengeQ * 45; // 45 seconds per question
+    testState.challengeAttempted = true; // Mark as attempted
+
+    // Clear any existing test timer
+    if (testState.timerInterval) clearInterval(testState.timerInterval);
+
+    // Hide test controls during challenge
+    document.getElementById('testControls')?.classList.add('hidden');
 
     // Show test screen first
     document.getElementById('testScreen').classList.remove('hidden');
     document.getElementById('resultsScreen').classList.add('hidden');
 
     // Now update UI elements (they exist now)
-    const currentQ = document.getElementById('currentQuestion');
-    const totalQ = document.getElementById('totalQuestions');
+    const currentQ = document.getElementById('currentQuestionDisplay');
+    const totalQ = document.getElementById('totalQuestionsCount');
     const progressBar = document.getElementById('progressBar');
     const sectionBadge = document.getElementById('sectionBadge');
     const difficultyBadge = document.getElementById('difficultyBadge');
@@ -56,16 +89,23 @@ function acceptChallenge() {
         difficultyBadge.style.background = '#eb3349'; // Dark Red
     }
 
+    // Support Admin Magic during challenge
+    const magicZone = document.getElementById('adminMagicZone');
+    if (magicZone) {
+        if (testState.isAdminTest) {
+            magicZone.classList.remove('hidden');
+            magicZone.classList.add('flex');
+        }
+    }
+
     // Start challenge timer
     startChallengeTimer();
     showChallengeQuestion(0);
 }
 
-// Decline challenge logic
-function declineChallenge() {
-    showToast('😊 قرار حكيم! النتائج قادمة...');
-    saveAndShowResults(testState.initialResult);
-}
+// Decline challenge logic - let script.js handle this to ensure consistency
+// function declineChallenge() removed here as it is defined in script.js
+
 
 // Show challenge question
 function showChallengeQuestion(index) {
@@ -80,9 +120,32 @@ function showChallengeQuestion(index) {
     testState.challengeIndex = index;
 
     // Update progress
-    document.getElementById('currentQuestion').textContent = index + 1;
-    const progress = ((index + 1) / 10) * 100;
-    document.getElementById('progressBar').style.width = progress + '%';
+    const currentQ = document.getElementById('currentQuestionDisplay');
+    if (currentQ) currentQ.textContent = index + 1;
+
+    const total = testState.challengeQuestions.length;
+
+    document.getElementById('totalQuestionsCount').textContent = total;
+
+    // Update Answered and Remaining counters for Challenge Mode
+    const answeredEl = document.getElementById('answeredQuestions');
+    const remainingEl = document.getElementById('remainingQuestions');
+    if (answeredEl) answeredEl.textContent = index;
+    if (remainingEl) remainingEl.textContent = total - index;
+
+    const progress = ((index + 1) / total) * 100;
+    const progressBar = document.getElementById('progressBar');
+    if (progressBar) progressBar.style.width = progress + '%';
+
+    // Update Question Ring (Visual feedback)
+    const ring = document.getElementById('questionRing');
+    if (ring) {
+        const offset = 264 - (264 * (index + 1) / total);
+        ring.style.strokeDashoffset = offset;
+    }
+
+    // Update Wrong count in challenge mode
+    updateWrongCountInChallenge();
 
     // Show question using existing function (reuse code)
     const container = document.getElementById('questionArea');
@@ -127,7 +190,7 @@ function renderQuestion(question) {
 
     if (question.word) {
         html += `
-      <button onclick="speakWord(this, '${question.word.replace(/'/g, "\\'")}')\" class="btn-audio px-6 py-3 rounded-2xl font-bold text-xl shadow-xl mb-6 pulse-animation">
+      <button onclick="speakWord(this, '${question.word.replace(/'/g, "\\'")}')" class="btn-audio px-6 py-3 rounded-2xl font-bold text-xl shadow-xl mb-6 pulse-animation">
         🔊 اضغط للاستماع
       </button>
     `;
@@ -136,18 +199,19 @@ function renderQuestion(question) {
     html += `</div>`;
 
     if (question.type === 'choice') {
-        const shuffledOptions = shuffleArray([...question.options]);
+        const shuffledOptions = localShuffle([...question.options]);
         html += `
       <div class="grid grid-cols-2 gap-4">
         ${shuffledOptions.map(opt => `
-          <button onclick="selectChallengeOption(this, '${opt.replace(/'/g, "\\'")}')\" 
+          <button onclick="selectChallengeOption(this, '${opt.replace(/'/g, "\\'")}')" 
             class="option-btn p-4 rounded-xl text-xl font-semibold shadow-md">
             ${opt}
           </button>
         `).join('')}
       </div>
     `;
-    } else if (question.type === 'typing') {
+    }
+    else if (question.type === 'typing') {
         html += `
       <div class="max-w-md mx-auto">
         <input type="text" id="typingAnswer" 
@@ -200,7 +264,7 @@ function selectChallengeOption(button, option) {
     }
 
     setTimeout(() => {
-        if (testState.challengeIndex < 9) {
+        if (testState.challengeIndex < testState.challengeQuestions.length - 1) {
             showChallengeQuestion(testState.challengeIndex + 1);
         } else {
             finishChallenge();
@@ -327,5 +391,45 @@ function finishChallenge() {
     }
 
     testState.isChallenge = false;
-    saveAndShowResults(updatedResult);
+    document.getElementById('testControls')?.classList.remove('hidden');
+    saveAndShowResults(updatedResult, { ...testState.initialScores, total: newTotal });
+}
+
+function updateWrongCountInChallenge() {
+    let wrongCount = 0;
+
+    // 1. Errors from history
+    if (testState.history) {
+        testState.history.forEach(session => {
+            session.questions.forEach((q, i) => {
+                const ans = session.answers[i];
+                if (ans) {
+                    if (ans.toUpperCase().trim() !== q.answer.toUpperCase().trim()) wrongCount++;
+                }
+            });
+        });
+    }
+
+    // 2. Errors from main test session
+    if (testState.questions) {
+        testState.questions.forEach((q, i) => {
+            const ans = testState.answers[i];
+            if (ans) {
+                if (ans.toUpperCase().trim() !== q.answer.toUpperCase().trim()) wrongCount++;
+            }
+        });
+    }
+
+    // 3. Errors from current challenge
+    if (testState.challengeQuestions) {
+        testState.challengeQuestions.forEach((q, i) => {
+            const ans = testState.challengeAnswers[i];
+            if (ans) {
+                if (ans.toUpperCase().trim() !== q.answer.toUpperCase().trim()) wrongCount++;
+            }
+        });
+    }
+
+    const wrongEl = document.getElementById('wrongQuestions');
+    if (wrongEl) wrongEl.textContent = wrongCount;
 }
