@@ -21,7 +21,7 @@ class FirebaseManager {
 
                 this.db = firebase.database();
 
-                // Track connection state
+                // 1. Track connection state
                 const connectedRef = this.db.ref('.info/connected');
                 connectedRef.on('value', (snapshot) => {
                     const wasAlreadyOnline = this.isOnline;
@@ -30,18 +30,41 @@ class FirebaseManager {
 
                     if (this.isOnline) {
                         console.log('🌐 Firebase Cloud: Online & Syncing');
-                        // Always try to process queue when coming online
                         this.processSyncQueue();
-
-                        // Pull latest data automatically on first connection or reconnection
                         if (!wasAlreadyOnline) {
-                            console.log('🔄 Performing automatic cloud sync...');
+                            console.log('🔄 Performing initial cloud sync...');
                             this.syncFromCloud();
                         }
                     } else {
                         console.warn('📴 Firebase Cloud: Disconnected/Offline');
                     }
                 });
+
+                // 2. LIVE REAL-TIME LISTENERS (Automatic Sync)
+                // Listen for changes in records
+                this.db.ref('records').on('value', (snapshot) => {
+                    const cloudRecords = snapshot.val();
+                    if (cloudRecords && this.isOnline) {
+                        const localRecords = JSON.parse(localStorage.getItem('englishTest_records')) || [];
+
+                        // Only update if cloud has different number of records or we are not in the middle of a test
+                        // This prevents UI jumps while someone is typing but ensures new records appear
+                        if (cloudRecords.length !== localRecords.length) {
+                            console.log('🔔 Cloud update detected: Merging records...');
+                            this.syncFromCloud();
+                        }
+                    }
+                });
+
+                // Listen for changes in employees (counters sync)
+                this.db.ref('employees').on('value', (snapshot) => {
+                    const cloudEmps = snapshot.val();
+                    if (cloudEmps && this.isOnline) {
+                        console.log('🔔 Cloud update detected: Syncing employee counters...');
+                        this.syncFromCloud();
+                    }
+                });
+
             } else {
                 console.error('❌ Firebase SDK or Config missing in index.html');
                 this.isOnline = false;
